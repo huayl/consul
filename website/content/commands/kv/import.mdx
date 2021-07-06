@@ -1,7 +1,6 @@
 ---
 layout: commands
 page_title: 'Commands: KV Import'
-sidebar_title: import
 ---
 
 # Consul KV Import
@@ -20,6 +19,11 @@ Usage: `consul kv import [options] [DATA]`
 @include 'http_api_options_client.mdx'
 
 @include 'http_api_options_server.mdx'
+
+#### KV Import Options
+
+- `-prefix` - Key prefix for imported data. The default value is empty meaning
+  root.
 
 #### Enterprise Options
 
@@ -46,5 +50,12 @@ escaping:
 
 ```shell-session
 $ consul kv import "$(cat values.json)"
+# Output
+```
+
+To import under prefix, use `-prefix` option:
+
+```shell-session
+$ cat values.json | consul kv import -prefix=sub/dir/ -
 # Output
 ```

@@ -3,8 +3,9 @@ package state
 import (
 	"fmt"
 
-	"github.com/hashicorp/consul/agent/structs"
 	"github.com/hashicorp/go-memdb"
+
+	"github.com/hashicorp/consul/agent/structs"
 )
 
 // autopilotConfigTableSchema returns a new table schema used for storing
@@ -23,10 +24,6 @@ func autopilotConfigTableSchema() *memdb.TableSchema {
 			},
 		},
 	}
-}
-
-func init() {
-	registerSchema(autopilotConfigTableSchema)
 }
 
 // Autopilot is used to pull the autopilot config from the snapshot.
@@ -113,7 +110,7 @@ func (s *Store) AutopilotCASConfig(idx, cidx uint64, config *structs.AutopilotCo
 	return err == nil, err
 }
 
-func autopilotSetConfigTxn(tx *txn, idx uint64, config *structs.AutopilotConfig) error {
+func autopilotSetConfigTxn(tx WriteTxn, idx uint64, config *structs.AutopilotConfig) error {
 	// Check for an existing config
 	existing, err := tx.First("autopilot-config", "id")
 	if err != nil {

@@ -1090,13 +1090,16 @@ func (rules ACLBindingRules) Sort() {
 	})
 }
 
+// Note: this is a subset of ACLAuthMethod's fields
 type ACLAuthMethodListStub struct {
-	Name        string
-	Type        string
-	DisplayName string `json:",omitempty"`
-	Description string `json:",omitempty"`
-	CreateIndex uint64
-	ModifyIndex uint64
+	Name          string
+	Type          string
+	DisplayName   string        `json:",omitempty"`
+	Description   string        `json:",omitempty"`
+	MaxTokenTTL   time.Duration `json:",omitempty"`
+	TokenLocality string        `json:",omitempty"`
+	CreateIndex   uint64
+	ModifyIndex   uint64
 	EnterpriseMeta
 }
 
@@ -1106,10 +1109,32 @@ func (p *ACLAuthMethod) Stub() *ACLAuthMethodListStub {
 		Type:           p.Type,
 		DisplayName:    p.DisplayName,
 		Description:    p.Description,
+		MaxTokenTTL:    p.MaxTokenTTL,
+		TokenLocality:  p.TokenLocality,
 		CreateIndex:    p.CreateIndex,
 		ModifyIndex:    p.ModifyIndex,
 		EnterpriseMeta: p.EnterpriseMeta,
 	}
+}
+
+// This is nearly identical to the ACLAuthMethod MarshalJSON
+// Unmarshaling is not implemented because the API is read only
+func (m *ACLAuthMethodListStub) MarshalJSON() ([]byte, error) {
+	type Alias ACLAuthMethodListStub
+	exported := &struct {
+		MaxTokenTTL string `json:",omitempty"`
+		*Alias
+	}{
+		MaxTokenTTL: m.MaxTokenTTL.String(),
+		Alias:       (*Alias)(m),
+	}
+	if m.MaxTokenTTL == 0 {
+		exported.MaxTokenTTL = ""
+	}
+
+	data, err := json.Marshal(exported)
+
+	return data, err
 }
 
 type ACLAuthMethods []*ACLAuthMethod
@@ -1772,4 +1797,56 @@ func CreateACLAuthorizationResponses(authz acl.Authorizer, requests []ACLAuthori
 	}
 
 	return responses, nil
+}
+
+type AgentMasterTokenIdentity struct {
+	agent    string
+	secretID string
+}
+
+func NewAgentMasterTokenIdentity(agent string, secretID string) *AgentMasterTokenIdentity {
+	return &AgentMasterTokenIdentity{
+		agent:    agent,
+		secretID: secretID,
+	}
+}
+
+func (id *AgentMasterTokenIdentity) ID() string {
+	return fmt.Sprintf("agent-master:%s", id.agent)
+}
+
+func (id *AgentMasterTokenIdentity) SecretToken() string {
+	return id.secretID
+}
+
+func (id *AgentMasterTokenIdentity) PolicyIDs() []string {
+	return nil
+}
+
+func (id *AgentMasterTokenIdentity) RoleIDs() []string {
+	return nil
+}
+
+func (id *AgentMasterTokenIdentity) EmbeddedPolicy() *ACLPolicy {
+	return nil
+}
+
+func (id *AgentMasterTokenIdentity) ServiceIdentityList() []*ACLServiceIdentity {
+	return nil
+}
+
+func (id *AgentMasterTokenIdentity) NodeIdentityList() []*ACLNodeIdentity {
+	return nil
+}
+
+func (id *AgentMasterTokenIdentity) IsExpired(asOf time.Time) bool {
+	return false
+}
+
+func (id *AgentMasterTokenIdentity) IsLocal() bool {
+	return true
+}
+
+func (id *AgentMasterTokenIdentity) EnterpriseMetadata() *EnterpriseMeta {
+	return nil
 }

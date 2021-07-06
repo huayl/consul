@@ -6,8 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hashicorp/consul/agent/structs"
 	"github.com/hashicorp/go-memdb"
+
+	"github.com/hashicorp/consul/agent/structs"
 )
 
 // sessionsTableSchema returns a new table schema used for storing session
@@ -129,11 +130,6 @@ func (index *CheckIDIndex) PrefixFromArgs(args ...interface{}) ([]byte, error) {
 	return val, nil
 }
 
-func init() {
-	registerSchema(sessionsTableSchema)
-	registerSchema(sessionChecksTableSchema)
-}
-
 // Sessions is used to pull the full list of sessions for use during snapshots.
 func (s *Snapshot) Sessions() (memdb.ResultIterator, error) {
 	iter, err := s.tx.Get("sessions", "id")
@@ -176,7 +172,7 @@ func (s *Store) SessionCreate(idx uint64, sess *structs.Session) error {
 // sessionCreateTxn is the inner method used for creating session entries in
 // an open transaction. Any health checks registered with the session will be
 // checked for failing status. Returns any error encountered.
-func sessionCreateTxn(tx *txn, idx uint64, sess *structs.Session) error {
+func sessionCreateTxn(tx WriteTxn, idx uint64, sess *structs.Session) error {
 	// Check that we have a session ID
 	if sess.ID == "" {
 		return ErrMissingSessionID
@@ -199,7 +195,7 @@ func sessionCreateTxn(tx *txn, idx uint64, sess *structs.Session) error {
 	sess.ModifyIndex = idx
 
 	// Check that the node exists
-	node, err := tx.First("nodes", "id", sess.Node)
+	node, err := tx.First(tableNodes, indexID, Query{Value: sess.Node})
 	if err != nil {
 		return fmt.Errorf("failed node lookup: %s", err)
 	}

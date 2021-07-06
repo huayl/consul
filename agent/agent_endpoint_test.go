@@ -27,6 +27,7 @@ import (
 	"github.com/hashicorp/consul/acl"
 	"github.com/hashicorp/consul/agent/config"
 	"github.com/hashicorp/consul/agent/connect"
+	"github.com/hashicorp/consul/agent/connect/ca"
 	"github.com/hashicorp/consul/agent/consul"
 	"github.com/hashicorp/consul/agent/debug"
 	"github.com/hashicorp/consul/agent/local"
@@ -35,7 +36,6 @@ import (
 	tokenStore "github.com/hashicorp/consul/agent/token"
 	"github.com/hashicorp/consul/agent/xds/proxysupport"
 	"github.com/hashicorp/consul/api"
-	"github.com/hashicorp/consul/lib"
 	"github.com/hashicorp/consul/sdk/testutil"
 	"github.com/hashicorp/consul/sdk/testutil/retry"
 	"github.com/hashicorp/consul/testrpc"
@@ -196,6 +196,10 @@ func TestAgent_Services_Sidecar(t *testing.T) {
 		Proxy: structs.ConnectProxyConfig{
 			DestinationServiceName: "db",
 			Upstreams:              structs.TestUpstreams(t),
+			Mode:                   structs.ProxyModeTransparent,
+			TransparentProxy: structs.TransparentProxyConfig{
+				OutboundListenerPort: 10101,
+			},
 		},
 	}
 	a.State.AddService(srv1, "")
@@ -395,7 +399,7 @@ func TestAgent_Service(t *testing.T) {
 		Service:     "web-sidecar-proxy",
 		Port:        8000,
 		Proxy:       expectProxy.ToAPI(),
-		ContentHash: "4c7d5f8d3748be6d",
+		ContentHash: "854327a458fe02a6",
 		Weights: api.AgentWeights{
 			Passing: 1,
 			Warning: 1,
@@ -409,14 +413,14 @@ func TestAgent_Service(t *testing.T) {
 	// Copy and modify
 	updatedResponse := *expectedResponse
 	updatedResponse.Port = 9999
-	updatedResponse.ContentHash = "713435ba1f5badcf"
+	updatedResponse.ContentHash = "b80a4d9370ed1104"
 
 	// Simple response for non-proxy service registered in TestAgent config
 	expectWebResponse := &api.AgentService{
 		ID:          "web",
 		Service:     "web",
 		Port:        8181,
-		ContentHash: "6c247f8ffa5d1fb2",
+		ContentHash: "f012740ee2d8ce60",
 		Weights: api.AgentWeights{
 			Passing: 1,
 			Warning: 1,
@@ -3155,11 +3159,11 @@ func TestAgent_RegisterService_TranslateKeys(t *testing.T) {
 
 	t.Run("normal", func(t *testing.T) {
 		t.Parallel()
-		testAgent_RegisterService_ACLDeny(t, "enable_central_service_config = false")
+		testAgent_RegisterService_TranslateKeys(t, "enable_central_service_config = false")
 	})
 	t.Run("service manager", func(t *testing.T) {
 		t.Parallel()
-		testAgent_RegisterService_ACLDeny(t, "enable_central_service_config = true")
+		testAgent_RegisterService_TranslateKeys(t, "enable_central_service_config = true")
 	})
 }
 
@@ -3315,6 +3319,7 @@ func testAgent_RegisterService_TranslateKeys(t *testing.T, extraHCL string) {
 					// there worked by inspecting the registered sidecar below.
 					SidecarService: nil,
 				},
+				EnterpriseMeta: *structs.DefaultEnterpriseMeta(),
 			}
 
 			got := a.State.Service(structs.NewServiceID("test", nil))
@@ -3328,6 +3333,7 @@ func testAgent_RegisterService_TranslateKeys(t *testing.T, extraHCL string) {
 					"some":                "meta",
 					"enable_tag_override": "sidecar_service.meta is 'opaque' so should not get translated",
 				},
+				TaggedAddresses:            map[string]structs.ServiceAddress{},
 				Port:                       8001,
 				EnableTagOverride:          true,
 				Weights:                    &structs.Weights{Passing: 1, Warning: 1},
@@ -3350,6 +3356,7 @@ func testAgent_RegisterService_TranslateKeys(t *testing.T, extraHCL string) {
 						},
 					},
 				},
+				EnterpriseMeta: *structs.DefaultEnterpriseMeta(),
 			}
 			gotSidecar := a.State.Service(structs.NewServiceID("test-sidecar-proxy", nil))
 			hasNoCorrectTCPCheck := true
@@ -3511,6 +3518,10 @@ func testAgent_RegisterService_UnmanagedConnectProxy(t *testing.T, extraHCL stri
 					DestinationName: "geo-cache",
 					LocalBindPort:   1235,
 				},
+			},
+			Mode: api.ProxyModeTransparent,
+			TransparentProxy: &api.TransparentProxyConfig{
+				OutboundListenerPort: 808,
 			},
 		},
 	}
@@ -5788,6 +5799,131 @@ func TestAgentConnectCALeafCert_goodNotLocal(t *testing.T) {
 	}
 }
 
+func TestAgentConnectCALeafCert_Vault_doesNotChurnLeafCertsAtIdle(t *testing.T) {
+	ca.SkipIfVaultNotPresent(t)
+
+	if testing.Short() {
+		t.Skip("too slow for testing.Short")
+	}
+
+	t.Parallel()
+
+	testVault := ca.NewTestVaultServer(t)
+	defer testVault.Stop()
+
+	assert := assert.New(t)
+	require := require.New(t)
+	a := StartTestAgent(t, TestAgent{Overrides: fmt.Sprintf(`
+		connect {
+			test_ca_leaf_root_change_spread = "1ns"
+			ca_provider = "vault"
+			ca_config {
+				address = %[1]q
+				token = %[2]q
+				root_pki_path = "pki-root/"
+				intermediate_pki_path = "pki-intermediate/"
+			}
+		}
+	`, testVault.Addr, testVault.RootToken)})
+	defer a.Shutdown()
+	testrpc.WaitForTestAgent(t, a.RPC, "dc1")
+	testrpc.WaitForActiveCARoot(t, a.RPC, "dc1", nil)
+
+	var ca1 *structs.CARoot
+	{
+		args := &structs.DCSpecificRequest{Datacenter: "dc1"}
+		var reply structs.IndexedCARoots
+		require.NoError(a.RPC("ConnectCA.Roots", args, &reply))
+		for _, r := range reply.Roots {
+			if r.ID == reply.ActiveRootID {
+				ca1 = r
+				break
+			}
+		}
+		require.NotNil(ca1)
+	}
+
+	{
+		// Register a local service
+		args := &structs.ServiceDefinition{
+			ID:      "foo",
+			Name:    "test",
+			Address: "127.0.0.1",
+			Port:    8000,
+			Check: structs.CheckType{
+				TTL: 15 * time.Second,
+			},
+		}
+		req, _ := http.NewRequest("PUT", "/v1/agent/service/register", jsonReader(args))
+		resp := httptest.NewRecorder()
+		_, err := a.srv.AgentRegisterService(resp, req)
+		require.NoError(err)
+		if !assert.Equal(200, resp.Code) {
+			t.Log("Body: ", resp.Body.String())
+		}
+	}
+
+	// List
+	req, _ := http.NewRequest("GET", "/v1/agent/connect/ca/leaf/test", nil)
+	resp := httptest.NewRecorder()
+	obj, err := a.srv.AgentConnectCALeafCert(resp, req)
+	require.NoError(err)
+	require.Equal("MISS", resp.Header().Get("X-Cache"))
+
+	// Get the issued cert
+	issued, ok := obj.(*structs.IssuedCert)
+	assert.True(ok)
+
+	// Verify that the cert is signed by the CA
+	requireLeafValidUnderCA(t, issued, ca1)
+
+	// Verify blocking index
+	assert.True(issued.ModifyIndex > 0)
+	assert.Equal(fmt.Sprintf("%d", issued.ModifyIndex),
+		resp.Header().Get("X-Consul-Index"))
+
+	// Test caching
+	{
+		// Fetch it again
+		resp := httptest.NewRecorder()
+		obj2, err := a.srv.AgentConnectCALeafCert(resp, req)
+		require.NoError(err)
+		require.Equal(obj, obj2)
+
+		// Should cache hit this time and not make request
+		require.Equal("HIT", resp.Header().Get("X-Cache"))
+	}
+
+	// Test that we aren't churning leaves for no reason at idle.
+	{
+		ch := make(chan error, 1)
+		go func() {
+			req, _ := http.NewRequest("GET", "/v1/agent/connect/ca/leaf/test?index="+strconv.Itoa(int(issued.ModifyIndex)), nil)
+			resp := httptest.NewRecorder()
+			obj, err := a.srv.AgentConnectCALeafCert(resp, req)
+			if err != nil {
+				ch <- err
+			} else {
+				issued2 := obj.(*structs.IssuedCert)
+				if issued.CertPEM == issued2.CertPEM {
+					ch <- fmt.Errorf("leaf woke up unexpectedly with same cert")
+				} else {
+					ch <- fmt.Errorf("leaf woke up unexpectedly with new cert")
+				}
+			}
+		}()
+
+		start := time.Now()
+
+		select {
+		case <-time.After(5 * time.Second):
+		case err := <-ch:
+			dur := time.Since(start)
+			t.Fatalf("unexpected return from blocking query; leaf churned during idle period, took %s: %v", dur, err)
+		}
+	}
+}
+
 func TestAgentConnectCALeafCert_secondaryDC_good(t *testing.T) {
 	if testing.Short() {
 		t.Skip("too slow for testing.Short")
@@ -6009,13 +6145,6 @@ func requireLeafValidUnderCA(t *testing.T, issued *structs.IssuedCert, ca *struc
 	// Verify the private key matches. tls.LoadX509Keypair does this for us!
 	_, err = tls.X509KeyPair([]byte(issued.CertPEM), []byte(issued.PrivateKeyPEM))
 	require.NoError(t, err)
-}
-
-func makeTelemetryDefaults(targetID string) lib.TelemetryConfig {
-	return lib.TelemetryConfig{
-		FilterDefault: true,
-		MetricsPrefix: "consul.proxy." + targetID,
-	}
 }
 
 func TestAgentConnectAuthorize_badBody(t *testing.T) {

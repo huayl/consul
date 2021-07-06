@@ -4,10 +4,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashicorp/consul/agent/structs"
-	"github.com/hashicorp/consul/sdk/testutil"
 	memdb "github.com/hashicorp/go-memdb"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hashicorp/consul/agent/structs"
+	"github.com/hashicorp/consul/sdk/testutil"
 )
 
 func TestStore_ConfigEntry(t *testing.T) {
@@ -23,7 +24,7 @@ func TestStore_ConfigEntry(t *testing.T) {
 	}
 
 	// Create
-	require.NoError(s.EnsureConfigEntry(0, expected, nil))
+	require.NoError(s.EnsureConfigEntry(0, expected))
 
 	idx, config, err := s.ConfigEntry(nil, structs.ProxyDefaults, "global", nil)
 	require.NoError(err)
@@ -38,7 +39,7 @@ func TestStore_ConfigEntry(t *testing.T) {
 			"DestinationServiceName": "bar",
 		},
 	}
-	require.NoError(s.EnsureConfigEntry(1, updated, nil))
+	require.NoError(s.EnsureConfigEntry(1, updated))
 
 	idx, config, err = s.ConfigEntry(nil, structs.ProxyDefaults, "global", nil)
 	require.NoError(err)
@@ -58,19 +59,19 @@ func TestStore_ConfigEntry(t *testing.T) {
 		Kind: structs.ServiceDefaults,
 		Name: "foo",
 	}
-	require.NoError(s.EnsureConfigEntry(3, serviceConf, nil))
+	require.NoError(s.EnsureConfigEntry(3, serviceConf))
 
 	ws := memdb.NewWatchSet()
 	_, _, err = s.ConfigEntry(ws, structs.ServiceDefaults, "foo", nil)
 	require.NoError(err)
 
 	// Make an unrelated modification and make sure the watch doesn't fire.
-	require.NoError(s.EnsureConfigEntry(4, updated, nil))
+	require.NoError(s.EnsureConfigEntry(4, updated))
 	require.False(watchFired(ws))
 
 	// Update the watched config and make sure it fires.
 	serviceConf.Protocol = "http"
-	require.NoError(s.EnsureConfigEntry(5, serviceConf, nil))
+	require.NoError(s.EnsureConfigEntry(5, serviceConf))
 	require.True(watchFired(ws))
 }
 
@@ -87,7 +88,7 @@ func TestStore_ConfigEntryCAS(t *testing.T) {
 	}
 
 	// Create
-	require.NoError(s.EnsureConfigEntry(1, expected, nil))
+	require.NoError(s.EnsureConfigEntry(1, expected))
 
 	idx, config, err := s.ConfigEntry(nil, structs.ProxyDefaults, "global", nil)
 	require.NoError(err)
@@ -102,7 +103,7 @@ func TestStore_ConfigEntryCAS(t *testing.T) {
 			"DestinationServiceName": "bar",
 		},
 	}
-	ok, err := s.EnsureConfigEntryCAS(2, 99, updated, nil)
+	ok, err := s.EnsureConfigEntryCAS(2, 99, updated)
 	require.False(ok)
 	require.NoError(err)
 
@@ -113,7 +114,7 @@ func TestStore_ConfigEntryCAS(t *testing.T) {
 	require.Equal(expected, config)
 
 	// Update with a valid index
-	ok, err = s.EnsureConfigEntryCAS(2, 1, updated, nil)
+	ok, err = s.EnsureConfigEntryCAS(2, 1, updated)
 	require.True(ok)
 	require.NoError(err)
 
@@ -156,7 +157,7 @@ func TestStore_ConfigEntry_UpdateOver(t *testing.T) {
 
 	// Create
 	nextIndex := uint64(1)
-	require.NoError(t, s.EnsureConfigEntry(nextIndex, initial.Clone(), nil))
+	require.NoError(t, s.EnsureConfigEntry(nextIndex, initial.Clone()))
 
 	idx, raw, err := s.ConfigEntry(nil, structs.ServiceIntentions, "api", nil)
 	require.NoError(t, err)
@@ -184,7 +185,7 @@ func TestStore_ConfigEntry_UpdateOver(t *testing.T) {
 		}
 
 		nextIndex++
-		err := s.EnsureConfigEntry(nextIndex, updated.Clone(), nil)
+		err := s.EnsureConfigEntry(nextIndex, updated.Clone())
 		testutil.RequireErrorContains(t, err, "cannot set this field to a different value")
 	})
 
@@ -205,7 +206,7 @@ func TestStore_ConfigEntry_UpdateOver(t *testing.T) {
 		}
 
 		nextIndex++
-		require.NoError(t, s.EnsureConfigEntry(nextIndex, updated.Clone(), nil))
+		require.NoError(t, s.EnsureConfigEntry(nextIndex, updated.Clone()))
 
 		// check
 		idx, raw, err = s.ConfigEntry(nil, structs.ServiceIntentions, "api", nil)
@@ -238,9 +239,9 @@ func TestStore_ConfigEntries(t *testing.T) {
 		Name: "test3",
 	}
 
-	require.NoError(s.EnsureConfigEntry(0, entry1, nil))
-	require.NoError(s.EnsureConfigEntry(1, entry2, nil))
-	require.NoError(s.EnsureConfigEntry(2, entry3, nil))
+	require.NoError(s.EnsureConfigEntry(0, entry1))
+	require.NoError(s.EnsureConfigEntry(1, entry2))
+	require.NoError(s.EnsureConfigEntry(2, entry3))
 
 	// Get all entries
 	idx, entries, err := s.ConfigEntries(nil, nil)
@@ -269,7 +270,7 @@ func TestStore_ConfigEntries(t *testing.T) {
 		Kind:     structs.ServiceDefaults,
 		Name:     "test2",
 		Protocol: "tcp",
-	}, nil))
+	}))
 	require.True(watchFired(ws))
 }
 
@@ -291,7 +292,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 						{Weight: 100},
 					},
 				}
-				return s.EnsureConfigEntry(0, entry, nil)
+				return s.EnsureConfigEntry(0, entry)
 			},
 			expectErr:      "does not permit advanced routing or splitting behavior",
 			expectGraphErr: true,
@@ -312,7 +313,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 						{Weight: 100},
 					},
 				}
-				return s.EnsureConfigEntry(0, entry, nil)
+				return s.EnsureConfigEntry(0, entry)
 			},
 			expectErr:      "does not permit advanced routing or splitting behavior",
 			expectGraphErr: true,
@@ -355,7 +356,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 					},
 					EnterpriseMeta: *structs.DefaultEnterpriseMeta(),
 				}
-				return s.EnsureConfigEntry(0, entry, nil)
+				return s.EnsureConfigEntry(0, entry)
 			},
 		},
 		"splitter works with http protocol (from proxy-defaults)": {
@@ -389,7 +390,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 						{Weight: 10, ServiceSubset: "v2"},
 					},
 				}
-				return s.EnsureConfigEntry(0, entry, nil)
+				return s.EnsureConfigEntry(0, entry)
 			},
 		},
 		"router fails with tcp protocol": {
@@ -426,7 +427,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 						},
 					},
 				}
-				return s.EnsureConfigEntry(0, entry, nil)
+				return s.EnsureConfigEntry(0, entry)
 			},
 			expectErr:      "does not permit advanced routing or splitting behavior",
 			expectGraphErr: true,
@@ -460,7 +461,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 						},
 					},
 				}
-				return s.EnsureConfigEntry(0, entry, nil)
+				return s.EnsureConfigEntry(0, entry)
 			},
 			expectErr:      "does not permit advanced routing or splitting behavior",
 			expectGraphErr: true,
@@ -609,7 +610,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 					Name:     "main",
 					Protocol: "tcp",
 				}
-				return s.EnsureConfigEntry(0, entry, nil)
+				return s.EnsureConfigEntry(0, entry)
 			},
 			expectErr:      "does not permit advanced routing or splitting behavior",
 			expectGraphErr: true,
@@ -692,7 +693,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 					Name:     "main",
 					Protocol: "tcp",
 				}
-				return s.EnsureConfigEntry(0, entry, nil)
+				return s.EnsureConfigEntry(0, entry)
 			},
 			expectErr:      "does not permit advanced routing or splitting behavior",
 			expectGraphErr: true,
@@ -720,7 +721,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 						{Weight: 10, Service: "other"},
 					},
 				}
-				return s.EnsureConfigEntry(0, entry, nil)
+				return s.EnsureConfigEntry(0, entry)
 			},
 			expectErr:      "uses inconsistent protocols",
 			expectGraphErr: true,
@@ -755,7 +756,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 						},
 					},
 				}
-				return s.EnsureConfigEntry(0, entry, nil)
+				return s.EnsureConfigEntry(0, entry)
 			},
 			expectErr:      "uses inconsistent protocols",
 			expectGraphErr: true,
@@ -789,7 +790,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 						},
 					},
 				}
-				return s.EnsureConfigEntry(0, entry, nil)
+				return s.EnsureConfigEntry(0, entry)
 			},
 			expectErr:      "uses inconsistent protocols",
 			expectGraphErr: true,
@@ -820,7 +821,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 						Service: "other",
 					},
 				}
-				return s.EnsureConfigEntry(0, entry, nil)
+				return s.EnsureConfigEntry(0, entry)
 			},
 			expectErr:      "uses inconsistent protocols",
 			expectGraphErr: true,
@@ -848,7 +849,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 						ServiceSubset: "v1",
 					},
 				}
-				return s.EnsureConfigEntry(0, entry, nil)
+				return s.EnsureConfigEntry(0, entry)
 			},
 		},
 		"cannot redirect to a subset that does not exist": {
@@ -868,7 +869,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 						ServiceSubset: "v1",
 					},
 				}
-				return s.EnsureConfigEntry(0, entry, nil)
+				return s.EnsureConfigEntry(0, entry)
 			},
 			expectErr:      `does not have a subset named "v1"`,
 			expectGraphErr: true,
@@ -892,7 +893,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 						Service: "other",
 					},
 				}
-				return s.EnsureConfigEntry(0, entry, nil)
+				return s.EnsureConfigEntry(0, entry)
 			},
 			expectErr:      `detected circular resolver redirect`,
 			expectGraphErr: true,
@@ -922,7 +923,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 						{Weight: 100, Service: "other"},
 					},
 				}
-				return s.EnsureConfigEntry(0, entry, nil)
+				return s.EnsureConfigEntry(0, entry)
 			},
 			expectErr:      `detected circular reference`,
 			expectGraphErr: true,
@@ -937,7 +938,7 @@ func TestStore_ConfigEntry_GraphValidation(t *testing.T) {
 			s := testConfigStateStore(t)
 			for _, entry := range tc.entries {
 				require.NoError(t, entry.Normalize())
-				require.NoError(t, s.EnsureConfigEntry(0, entry, nil))
+				require.NoError(t, s.EnsureConfigEntry(0, entry))
 			}
 
 			err := tc.op(t, s)
@@ -961,9 +962,9 @@ func TestStore_ReadDiscoveryChainConfigEntries_Overrides(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		entries        []structs.ConfigEntry
-		expectBefore   []structs.ConfigEntryKindName
-		overrides      map[structs.ConfigEntryKindName]structs.ConfigEntry
-		expectAfter    []structs.ConfigEntryKindName
+		expectBefore   []ConfigEntryKindName
+		overrides      map[ConfigEntryKindName]structs.ConfigEntry
+		expectAfter    []ConfigEntryKindName
 		expectAfterErr string
 		checkAfter     func(t *testing.T, entrySet *structs.DiscoveryChainConfigEntries)
 	}{
@@ -976,13 +977,13 @@ func TestStore_ReadDiscoveryChainConfigEntries_Overrides(t *testing.T) {
 					Protocol: "tcp",
 				},
 			},
-			expectBefore: []structs.ConfigEntryKindName{
-				structs.NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
+			expectBefore: []ConfigEntryKindName{
+				NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
 			},
-			overrides: map[structs.ConfigEntryKindName]structs.ConfigEntry{
-				structs.NewConfigEntryKindName(structs.ServiceDefaults, "main", nil): nil,
+			overrides: map[ConfigEntryKindName]structs.ConfigEntry{
+				NewConfigEntryKindName(structs.ServiceDefaults, "main", nil): nil,
 			},
-			expectAfter: []structs.ConfigEntryKindName{
+			expectAfter: []ConfigEntryKindName{
 				// nothing
 			},
 		},
@@ -995,18 +996,18 @@ func TestStore_ReadDiscoveryChainConfigEntries_Overrides(t *testing.T) {
 					Protocol: "tcp",
 				},
 			},
-			expectBefore: []structs.ConfigEntryKindName{
-				structs.NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
+			expectBefore: []ConfigEntryKindName{
+				NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
 			},
-			overrides: map[structs.ConfigEntryKindName]structs.ConfigEntry{
-				structs.NewConfigEntryKindName(structs.ServiceDefaults, "main", nil): &structs.ServiceConfigEntry{
+			overrides: map[ConfigEntryKindName]structs.ConfigEntry{
+				NewConfigEntryKindName(structs.ServiceDefaults, "main", nil): &structs.ServiceConfigEntry{
 					Kind:     structs.ServiceDefaults,
 					Name:     "main",
 					Protocol: "grpc",
 				},
 			},
-			expectAfter: []structs.ConfigEntryKindName{
-				structs.NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
+			expectAfter: []ConfigEntryKindName{
+				NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
 			},
 			checkAfter: func(t *testing.T, entrySet *structs.DiscoveryChainConfigEntries) {
 				defaults := entrySet.GetService(structs.NewServiceID("main", nil))
@@ -1028,15 +1029,15 @@ func TestStore_ReadDiscoveryChainConfigEntries_Overrides(t *testing.T) {
 					Name: "main",
 				},
 			},
-			expectBefore: []structs.ConfigEntryKindName{
-				structs.NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
-				structs.NewConfigEntryKindName(structs.ServiceRouter, "main", nil),
+			expectBefore: []ConfigEntryKindName{
+				NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
+				NewConfigEntryKindName(structs.ServiceRouter, "main", nil),
 			},
-			overrides: map[structs.ConfigEntryKindName]structs.ConfigEntry{
-				structs.NewConfigEntryKindName(structs.ServiceRouter, "main", nil): nil,
+			overrides: map[ConfigEntryKindName]structs.ConfigEntry{
+				NewConfigEntryKindName(structs.ServiceRouter, "main", nil): nil,
 			},
-			expectAfter: []structs.ConfigEntryKindName{
-				structs.NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
+			expectAfter: []ConfigEntryKindName{
+				NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
 			},
 		},
 		{
@@ -1073,13 +1074,13 @@ func TestStore_ReadDiscoveryChainConfigEntries_Overrides(t *testing.T) {
 					},
 				},
 			},
-			expectBefore: []structs.ConfigEntryKindName{
-				structs.NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
-				structs.NewConfigEntryKindName(structs.ServiceResolver, "main", nil),
-				structs.NewConfigEntryKindName(structs.ServiceRouter, "main", nil),
+			expectBefore: []ConfigEntryKindName{
+				NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
+				NewConfigEntryKindName(structs.ServiceResolver, "main", nil),
+				NewConfigEntryKindName(structs.ServiceRouter, "main", nil),
 			},
-			overrides: map[structs.ConfigEntryKindName]structs.ConfigEntry{
-				structs.NewConfigEntryKindName(structs.ServiceRouter, "main", nil): &structs.ServiceRouterConfigEntry{
+			overrides: map[ConfigEntryKindName]structs.ConfigEntry{
+				NewConfigEntryKindName(structs.ServiceRouter, "main", nil): &structs.ServiceRouterConfigEntry{
 					Kind: structs.ServiceRouter,
 					Name: "main",
 					Routes: []structs.ServiceRoute{
@@ -1096,10 +1097,10 @@ func TestStore_ReadDiscoveryChainConfigEntries_Overrides(t *testing.T) {
 					},
 				},
 			},
-			expectAfter: []structs.ConfigEntryKindName{
-				structs.NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
-				structs.NewConfigEntryKindName(structs.ServiceResolver, "main", nil),
-				structs.NewConfigEntryKindName(structs.ServiceRouter, "main", nil),
+			expectAfter: []ConfigEntryKindName{
+				NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
+				NewConfigEntryKindName(structs.ServiceResolver, "main", nil),
+				NewConfigEntryKindName(structs.ServiceRouter, "main", nil),
 			},
 			checkAfter: func(t *testing.T, entrySet *structs.DiscoveryChainConfigEntries) {
 				router := entrySet.GetRouter(structs.NewServiceID("main", nil))
@@ -1136,15 +1137,15 @@ func TestStore_ReadDiscoveryChainConfigEntries_Overrides(t *testing.T) {
 					},
 				},
 			},
-			expectBefore: []structs.ConfigEntryKindName{
-				structs.NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
-				structs.NewConfigEntryKindName(structs.ServiceSplitter, "main", nil),
+			expectBefore: []ConfigEntryKindName{
+				NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
+				NewConfigEntryKindName(structs.ServiceSplitter, "main", nil),
 			},
-			overrides: map[structs.ConfigEntryKindName]structs.ConfigEntry{
-				structs.NewConfigEntryKindName(structs.ServiceSplitter, "main", nil): nil,
+			overrides: map[ConfigEntryKindName]structs.ConfigEntry{
+				NewConfigEntryKindName(structs.ServiceSplitter, "main", nil): nil,
 			},
-			expectAfter: []structs.ConfigEntryKindName{
-				structs.NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
+			expectAfter: []ConfigEntryKindName{
+				NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
 			},
 		},
 		{
@@ -1163,12 +1164,12 @@ func TestStore_ReadDiscoveryChainConfigEntries_Overrides(t *testing.T) {
 					},
 				},
 			},
-			expectBefore: []structs.ConfigEntryKindName{
-				structs.NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
-				structs.NewConfigEntryKindName(structs.ServiceSplitter, "main", nil),
+			expectBefore: []ConfigEntryKindName{
+				NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
+				NewConfigEntryKindName(structs.ServiceSplitter, "main", nil),
 			},
-			overrides: map[structs.ConfigEntryKindName]structs.ConfigEntry{
-				structs.NewConfigEntryKindName(structs.ServiceSplitter, "main", nil): &structs.ServiceSplitterConfigEntry{
+			overrides: map[ConfigEntryKindName]structs.ConfigEntry{
+				NewConfigEntryKindName(structs.ServiceSplitter, "main", nil): &structs.ServiceSplitterConfigEntry{
 					Kind: structs.ServiceSplitter,
 					Name: "main",
 					Splits: []structs.ServiceSplit{
@@ -1177,9 +1178,9 @@ func TestStore_ReadDiscoveryChainConfigEntries_Overrides(t *testing.T) {
 					},
 				},
 			},
-			expectAfter: []structs.ConfigEntryKindName{
-				structs.NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
-				structs.NewConfigEntryKindName(structs.ServiceSplitter, "main", nil),
+			expectAfter: []ConfigEntryKindName{
+				NewConfigEntryKindName(structs.ServiceDefaults, "main", nil),
+				NewConfigEntryKindName(structs.ServiceSplitter, "main", nil),
 			},
 			checkAfter: func(t *testing.T, entrySet *structs.DiscoveryChainConfigEntries) {
 				splitter := entrySet.GetSplitter(structs.NewServiceID("main", nil))
@@ -1202,13 +1203,13 @@ func TestStore_ReadDiscoveryChainConfigEntries_Overrides(t *testing.T) {
 					Name: "main",
 				},
 			},
-			expectBefore: []structs.ConfigEntryKindName{
-				structs.NewConfigEntryKindName(structs.ServiceResolver, "main", nil),
+			expectBefore: []ConfigEntryKindName{
+				NewConfigEntryKindName(structs.ServiceResolver, "main", nil),
 			},
-			overrides: map[structs.ConfigEntryKindName]structs.ConfigEntry{
-				structs.NewConfigEntryKindName(structs.ServiceResolver, "main", nil): nil,
+			overrides: map[ConfigEntryKindName]structs.ConfigEntry{
+				NewConfigEntryKindName(structs.ServiceResolver, "main", nil): nil,
 			},
-			expectAfter: []structs.ConfigEntryKindName{
+			expectAfter: []ConfigEntryKindName{
 				// nothing
 			},
 		},
@@ -1220,18 +1221,18 @@ func TestStore_ReadDiscoveryChainConfigEntries_Overrides(t *testing.T) {
 					Name: "main",
 				},
 			},
-			expectBefore: []structs.ConfigEntryKindName{
-				structs.NewConfigEntryKindName(structs.ServiceResolver, "main", nil),
+			expectBefore: []ConfigEntryKindName{
+				NewConfigEntryKindName(structs.ServiceResolver, "main", nil),
 			},
-			overrides: map[structs.ConfigEntryKindName]structs.ConfigEntry{
-				structs.NewConfigEntryKindName(structs.ServiceResolver, "main", nil): &structs.ServiceResolverConfigEntry{
+			overrides: map[ConfigEntryKindName]structs.ConfigEntry{
+				NewConfigEntryKindName(structs.ServiceResolver, "main", nil): &structs.ServiceResolverConfigEntry{
 					Kind:           structs.ServiceResolver,
 					Name:           "main",
 					ConnectTimeout: 33 * time.Second,
 				},
 			},
-			expectAfter: []structs.ConfigEntryKindName{
-				structs.NewConfigEntryKindName(structs.ServiceResolver, "main", nil),
+			expectAfter: []ConfigEntryKindName{
+				NewConfigEntryKindName(structs.ServiceResolver, "main", nil),
 			},
 			checkAfter: func(t *testing.T, entrySet *structs.DiscoveryChainConfigEntries) {
 				resolver := entrySet.GetResolver(structs.NewServiceID("main", nil))
@@ -1245,7 +1246,7 @@ func TestStore_ReadDiscoveryChainConfigEntries_Overrides(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := testConfigStateStore(t)
 			for _, entry := range tc.entries {
-				require.NoError(t, s.EnsureConfigEntry(0, entry, nil))
+				require.NoError(t, s.EnsureConfigEntry(0, entry))
 			}
 
 			t.Run("without override", func(t *testing.T) {
@@ -1275,31 +1276,31 @@ func TestStore_ReadDiscoveryChainConfigEntries_Overrides(t *testing.T) {
 	}
 }
 
-func entrySetToKindNames(entrySet *structs.DiscoveryChainConfigEntries) []structs.ConfigEntryKindName {
-	var out []structs.ConfigEntryKindName
+func entrySetToKindNames(entrySet *structs.DiscoveryChainConfigEntries) []ConfigEntryKindName {
+	var out []ConfigEntryKindName
 	for _, entry := range entrySet.Routers {
-		out = append(out, structs.NewConfigEntryKindName(
+		out = append(out, NewConfigEntryKindName(
 			entry.Kind,
 			entry.Name,
 			&entry.EnterpriseMeta,
 		))
 	}
 	for _, entry := range entrySet.Splitters {
-		out = append(out, structs.NewConfigEntryKindName(
+		out = append(out, NewConfigEntryKindName(
 			entry.Kind,
 			entry.Name,
 			&entry.EnterpriseMeta,
 		))
 	}
 	for _, entry := range entrySet.Resolvers {
-		out = append(out, structs.NewConfigEntryKindName(
+		out = append(out, NewConfigEntryKindName(
 			entry.Kind,
 			entry.Name,
 			&entry.EnterpriseMeta,
 		))
 	}
 	for _, entry := range entrySet.Services {
-		out = append(out, structs.NewConfigEntryKindName(
+		out = append(out, NewConfigEntryKindName(
 			entry.Kind,
 			entry.Name,
 			&entry.EnterpriseMeta,
@@ -1340,7 +1341,7 @@ func TestStore_ReadDiscoveryChainConfigEntries_SubsetSplit(t *testing.T) {
 	}
 
 	for _, entry := range entries {
-		require.NoError(t, s.EnsureConfigEntry(0, entry, nil))
+		require.NoError(t, s.EnsureConfigEntry(0, entry))
 	}
 
 	_, entrySet, err := s.readDiscoveryChainConfigEntries(nil, "main", nil, nil)
@@ -1361,14 +1362,14 @@ func TestStore_ValidateGatewayNamesCannotBeShared(t *testing.T) {
 		Kind: structs.IngressGateway,
 		Name: "gateway",
 	}
-	require.NoError(t, s.EnsureConfigEntry(0, ingress, nil))
+	require.NoError(t, s.EnsureConfigEntry(0, ingress))
 
 	terminating := &structs.TerminatingGatewayConfigEntry{
 		Kind: structs.TerminatingGateway,
 		Name: "gateway",
 	}
 	// Cannot have 2 gateways with same service name
-	require.Error(t, s.EnsureConfigEntry(1, terminating, nil))
+	require.Error(t, s.EnsureConfigEntry(1, terminating))
 
 	ingress = &structs.IngressGatewayConfigEntry{
 		Kind: structs.IngressGateway,
@@ -1377,14 +1378,14 @@ func TestStore_ValidateGatewayNamesCannotBeShared(t *testing.T) {
 			{Port: 8080},
 		},
 	}
-	require.NoError(t, s.EnsureConfigEntry(2, ingress, nil))
+	require.NoError(t, s.EnsureConfigEntry(2, ingress))
 	require.NoError(t, s.DeleteConfigEntry(3, structs.IngressGateway, "gateway", nil))
 
 	// Adding the terminating gateway with same name should now work
-	require.NoError(t, s.EnsureConfigEntry(4, terminating, nil))
+	require.NoError(t, s.EnsureConfigEntry(4, terminating))
 
 	// Cannot have 2 gateways with same service name
-	require.Error(t, s.EnsureConfigEntry(5, ingress, nil))
+	require.Error(t, s.EnsureConfigEntry(5, ingress))
 }
 
 func TestStore_ValidateIngressGatewayErrorOnMismatchedProtocols(t *testing.T) {
@@ -1413,10 +1414,10 @@ func TestStore_ValidateIngressGatewayErrorOnMismatchedProtocols(t *testing.T) {
 			Name:     "web",
 			Protocol: "http",
 		}
-		require.NoError(t, s.EnsureConfigEntry(0, expected, nil))
+		require.NoError(t, s.EnsureConfigEntry(0, expected))
 
 		// Next configure http ingress to route to the http service
-		require.NoError(t, s.EnsureConfigEntry(1, newIngress("http", "web"), nil))
+		require.NoError(t, s.EnsureConfigEntry(1, newIngress("http", "web")))
 
 		t.Run("via modification", func(t *testing.T) {
 			// Now redefine the target service as tcp
@@ -1426,7 +1427,7 @@ func TestStore_ValidateIngressGatewayErrorOnMismatchedProtocols(t *testing.T) {
 				Protocol: "tcp",
 			}
 
-			err := s.EnsureConfigEntry(2, expected, nil)
+			err := s.EnsureConfigEntry(2, expected)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), `has protocol "tcp"`)
 		})
@@ -1442,7 +1443,7 @@ func TestStore_ValidateIngressGatewayErrorOnMismatchedProtocols(t *testing.T) {
 		s := testConfigStateStore(t)
 
 		// First configure tcp ingress to route to a defaulted tcp service
-		require.NoError(t, s.EnsureConfigEntry(0, newIngress("tcp", "web"), nil))
+		require.NoError(t, s.EnsureConfigEntry(0, newIngress("tcp", "web")))
 
 		// Now redefine the target service as http
 		expected := &structs.ServiceConfigEntry{
@@ -1450,14 +1451,14 @@ func TestStore_ValidateIngressGatewayErrorOnMismatchedProtocols(t *testing.T) {
 			Name:     "web",
 			Protocol: "http",
 		}
-		require.NoError(t, s.EnsureConfigEntry(1, expected, nil))
+		require.NoError(t, s.EnsureConfigEntry(1, expected))
 	})
 
 	t.Run("tcp ingress fails with tcp upstream (defaulted) later changed to http", func(t *testing.T) {
 		s := testConfigStateStore(t)
 
 		// First configure tcp ingress to route to a defaulted tcp service
-		require.NoError(t, s.EnsureConfigEntry(0, newIngress("tcp", "web"), nil))
+		require.NoError(t, s.EnsureConfigEntry(0, newIngress("tcp", "web")))
 
 		// Now redefine the target service as http
 		expected := &structs.ServiceConfigEntry{
@@ -1465,7 +1466,7 @@ func TestStore_ValidateIngressGatewayErrorOnMismatchedProtocols(t *testing.T) {
 			Name:     "web",
 			Protocol: "http",
 		}
-		require.NoError(t, s.EnsureConfigEntry(1, expected, nil))
+		require.NoError(t, s.EnsureConfigEntry(1, expected))
 
 		t.Run("and a router defined", func(t *testing.T) {
 			// This part should fail.
@@ -1473,7 +1474,7 @@ func TestStore_ValidateIngressGatewayErrorOnMismatchedProtocols(t *testing.T) {
 				Kind: structs.ServiceRouter,
 				Name: "web",
 			}
-			err := s.EnsureConfigEntry(2, expected2, nil)
+			err := s.EnsureConfigEntry(2, expected2)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), `has protocol "http"`)
 		})
@@ -1487,7 +1488,7 @@ func TestStore_ValidateIngressGatewayErrorOnMismatchedProtocols(t *testing.T) {
 					{Weight: 100},
 				},
 			}
-			err := s.EnsureConfigEntry(2, expected2, nil)
+			err := s.EnsureConfigEntry(2, expected2)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), `has protocol "http"`)
 		})
@@ -1495,7 +1496,7 @@ func TestStore_ValidateIngressGatewayErrorOnMismatchedProtocols(t *testing.T) {
 
 	t.Run("http ingress fails with tcp upstream (defaulted)", func(t *testing.T) {
 		s := testConfigStateStore(t)
-		err := s.EnsureConfigEntry(0, newIngress("http", "web"), nil)
+		err := s.EnsureConfigEntry(0, newIngress("http", "web"))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), `has protocol "tcp"`)
 	})
@@ -1509,9 +1510,9 @@ func TestStore_ValidateIngressGatewayErrorOnMismatchedProtocols(t *testing.T) {
 				"protocol": "http2",
 			},
 		}
-		require.NoError(t, s.EnsureConfigEntry(0, expected, nil))
+		require.NoError(t, s.EnsureConfigEntry(0, expected))
 
-		err := s.EnsureConfigEntry(1, newIngress("http", "web"), nil)
+		err := s.EnsureConfigEntry(1, newIngress("http", "web"))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), `has protocol "http2"`)
 	})
@@ -1523,8 +1524,8 @@ func TestStore_ValidateIngressGatewayErrorOnMismatchedProtocols(t *testing.T) {
 			Name:     "web",
 			Protocol: "grpc",
 		}
-		require.NoError(t, s.EnsureConfigEntry(1, expected, nil))
-		err := s.EnsureConfigEntry(2, newIngress("http", "web"), nil)
+		require.NoError(t, s.EnsureConfigEntry(1, expected))
+		err := s.EnsureConfigEntry(2, newIngress("http", "web"))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), `has protocol "grpc"`)
 	})
@@ -1536,18 +1537,18 @@ func TestStore_ValidateIngressGatewayErrorOnMismatchedProtocols(t *testing.T) {
 			Name:     "web",
 			Protocol: "http",
 		}
-		require.NoError(t, s.EnsureConfigEntry(2, expected, nil))
-		require.NoError(t, s.EnsureConfigEntry(3, newIngress("http", "web"), nil))
+		require.NoError(t, s.EnsureConfigEntry(2, expected))
+		require.NoError(t, s.EnsureConfigEntry(3, newIngress("http", "web")))
 	})
 
 	t.Run("http ingress ignores wildcard specifier", func(t *testing.T) {
 		s := testConfigStateStore(t)
-		require.NoError(t, s.EnsureConfigEntry(4, newIngress("http", "*"), nil))
+		require.NoError(t, s.EnsureConfigEntry(4, newIngress("http", "*")))
 	})
 
 	t.Run("deleting ingress config entry ok", func(t *testing.T) {
 		s := testConfigStateStore(t)
-		require.NoError(t, s.EnsureConfigEntry(1, newIngress("tcp", "web"), nil))
+		require.NoError(t, s.EnsureConfigEntry(1, newIngress("tcp", "web")))
 		require.NoError(t, s.DeleteConfigEntry(5, structs.IngressGateway, "gateway", nil))
 	})
 }
@@ -1821,7 +1822,7 @@ func TestSourcesForTarget(t *testing.T) {
 			var i uint64 = 1
 			for _, entry := range tc.entries {
 				require.NoError(t, entry.Normalize())
-				require.NoError(t, s.EnsureConfigEntry(i, entry, nil))
+				require.NoError(t, s.EnsureConfigEntry(i, entry))
 				i++
 			}
 
@@ -2023,7 +2024,7 @@ func TestTargetsForSource(t *testing.T) {
 			var i uint64 = 1
 			for _, entry := range tc.entries {
 				require.NoError(t, entry.Normalize())
-				require.NoError(t, s.EnsureConfigEntry(i, entry, nil))
+				require.NoError(t, s.EnsureConfigEntry(i, entry))
 				i++
 			}
 
@@ -2258,7 +2259,7 @@ func TestStore_ValidateServiceIntentionsErrorOnIncompatibleProtocols(t *testing.
 				if op.deletion {
 					err = s.DeleteConfigEntry(nextIndex, op.entry.GetKind(), op.entry.GetName(), nil)
 				} else {
-					err = s.EnsureConfigEntry(nextIndex, op.entry, nil)
+					err = s.EnsureConfigEntry(nextIndex, op.entry)
 				}
 
 				if isLast && tc.expectLastErr != "" {

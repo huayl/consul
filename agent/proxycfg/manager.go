@@ -4,11 +4,12 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/hashicorp/go-hclog"
+
 	"github.com/hashicorp/consul/agent/cache"
 	"github.com/hashicorp/consul/agent/local"
 	"github.com/hashicorp/consul/agent/structs"
 	"github.com/hashicorp/consul/tlsutil"
-	"github.com/hashicorp/go-hclog"
 )
 
 var (
@@ -58,6 +59,8 @@ type ManagerConfig struct {
 	// Cache is the agent's cache instance that can be used to retrieve, store and
 	// monitor state for the proxies.
 	Cache *cache.Cache
+	// Health provides service health updates on a notification channel.
+	Health Health
 	// state is the agent's local state to be watched for new proxy registrations.
 	State *local.State
 	// source describes the current agent's identity, it's used directly for
@@ -186,20 +189,23 @@ func (m *Manager) ensureProxyServiceLocked(ns *structs.NodeService, token string
 		state.Close()
 	}
 
-	var err error
-	state, err = newState(ns, token)
-	if err != nil {
-		return err
+	// TODO: move to a function that translates ManagerConfig->stateConfig
+	stateConfig := stateConfig{
+		logger:                m.Logger.With("service_id", sid.String()),
+		cache:                 m.Cache,
+		health:                m.Health,
+		source:                m.Source,
+		dnsConfig:             m.DNSConfig,
+		intentionDefaultAllow: m.IntentionDefaultAllow,
+	}
+	if m.TLSConfigurator != nil {
+		stateConfig.serverSNIFn = m.TLSConfigurator.ServerSNI
 	}
 
-	// Set the necessary dependencies
-	state.logger = m.Logger.With("service_id", sid.String())
-	state.cache = m.Cache
-	state.source = m.Source
-	state.dnsConfig = m.DNSConfig
-	state.intentionDefaultAllow = m.IntentionDefaultAllow
-	if m.TLSConfigurator != nil {
-		state.serverSNIFn = m.TLSConfigurator.ServerSNI
+	var err error
+	state, err = newState(ns, token, stateConfig)
+	if err != nil {
+		return err
 	}
 
 	ch, err := state.Watch()

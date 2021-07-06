@@ -51,7 +51,7 @@ func (h *Server) Subscribe(req *pbsubscribe.SubscribeRequest, serverStream pbsub
 	logger.Trace("new subscription")
 	defer logger.Trace("subscription closed")
 
-	entMeta := structs.EnterpriseMetaInitializer(req.Namespace)
+	entMeta := structs.NewEnterpriseMeta(req.Namespace)
 	authz, err := h.Backend.ResolveTokenAndDefaultMeta(req.Token, &entMeta, nil)
 	if err != nil {
 		return err
@@ -95,7 +95,7 @@ func toStreamSubscribeRequest(req *pbsubscribe.SubscribeRequest, entMeta structs
 		Key:       req.Key,
 		Token:     req.Token,
 		Index:     req.Index,
-		Namespace: entMeta.GetNamespace(),
+		Namespace: entMeta.NamespaceOrEmpty(),
 	}
 }
 

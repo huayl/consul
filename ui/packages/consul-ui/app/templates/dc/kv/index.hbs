@@ -1,4 +1,7 @@
-{{page-title 'Key/Value'}}
+<Route
+  @name={{routeName}}
+  @title="Key/Value"
+as |route|>
 {{#let
 
   (hash
@@ -50,11 +53,13 @@ as |sort filters items|}}
     {{/if}}
       </BlockSlot>
       <BlockSlot @name="actions">
+{{#if (can 'create kvs')}}
     {{#if (not-eq parent.Key '/') }}
           <a data-test-create href="{{href-to 'dc.kv.create' parent.Key}}" class="type-create">Create</a>
     {{else}}
           <a data-test-create href="{{href-to 'dc.kv.root-create'}}" class="type-create">Create</a>
     {{/if}}
+{{/if}}
       </BlockSlot>
       <BlockSlot @name="content">
         <DataWriter
@@ -79,7 +84,9 @@ as |sort filters items|}}
                 />
               </collection.Collection>
               <collection.Empty>
-                <EmptyState @allowLogin={{true}}>
+                <EmptyState
+                  @login={{route.model.app.login.open}}
+                >
                   <BlockSlot @name="header">
                     <h2>
                       {{#if (gt items.length 0)}}
@@ -114,3 +121,4 @@ as |sort filters items|}}
       </BlockSlot>
     </AppView>
 {{/let}}
+</Route>

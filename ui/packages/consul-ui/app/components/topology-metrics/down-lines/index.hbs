@@ -1,5 +1,3 @@
-{{on-window 'resize' (action this.getIconPositions)}}
-
 {{#if (gt @lines.length 0)}}
   <svg
     {{did-insert this.getIconPositions}}
@@ -88,6 +86,14 @@
   {{#if (or (not item.Intention.Allowed) item.Intention.HasPermissions)}}
     <TopologyMetrics::Popover
       @type={{if item.Intention.HasPermissions 'l7' 'deny'}}
+      @position={{find-by 'id' (concat this.guid item.Namespace item.Name) this.iconPositions}}
+      @item={{item}}
+      @oncreate={{action @oncreate item @service}}
+    />
+  {{else if (and item.Intention.Allowed (not item.TransparentProxy) (eq item.Source 'specific-intention'))}}
+    <TopologyMetrics::Popover
+      @type='not-defined'
+      @service={{@service}}
       @position={{find-by 'id' (concat this.guid item.Namespace item.Name) this.iconPositions}}
       @item={{item}}
       @oncreate={{action @oncreate item @service}}

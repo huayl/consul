@@ -1,6 +1,7 @@
 import { set, get } from '@ember/object';
 import RepositoryService from 'consul-ui/services/repository';
 import { PRIMARY_KEY } from 'consul-ui/models/intention';
+import dataSource from 'consul-ui/decorators/data-source';
 
 const modelName = 'intention';
 export default class IntentionRepository extends RepositoryService {
@@ -32,6 +33,17 @@ export default class IntentionRepository extends RepositoryService {
     return this.managedByCRDs;
   }
 
+  // legacy intentions are strange that in order to read/write you need access
+  // to either/or the destination or source
+  async authorizeBySlug(cb, access, params) {
+    const [, source, , destination] = params.id.split(':');
+    const ability = this.permissions.abilityFor(this.getModelName());
+    params.resources = ability
+      .generateForSegment(source)
+      .concat(ability.generateForSegment(destination));
+    return this.authorizeByPermissions(cb, access, params);
+  }
+
   async persist(obj) {
     const res = await super.persist(...arguments);
     // if Action is set it means we are an l4 type intention
@@ -45,11 +57,22 @@ export default class IntentionRepository extends RepositoryService {
     return res;
   }
 
-  async findByService(slug, dc, nspace, configuration = {}) {
+  @dataSource('/:ns/:dc/intentions')
+  async findAllByDatacenter() {
+    return super.findAllByDatacenter(...arguments);
+  }
+
+  @dataSource('/:ns/:dc/intention/:id')
+  async findBySlug() {
+    return super.findBySlug(...arguments);
+  }
+
+  @dataSource('/:ns/:dc/intentions/for-service/:id')
+  async findByService(params, configuration = {}) {
     const query = {
-      dc,
-      nspace,
-      filter: `SourceName == "${slug}" or DestinationName == "${slug}" or SourceName == "*" or DestinationName == "*"`,
+      dc: params.dc,
+      nspace: params.nspace,
+      filter: `SourceName == "${params.id}" or DestinationName == "${params.id}" or SourceName == "*" or DestinationName == "*"`,
     };
     if (typeof configuration.cursor !== 'undefined') {
       query.index = configuration.cursor;

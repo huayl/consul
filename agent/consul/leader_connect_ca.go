@@ -9,12 +9,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hashicorp/go-hclog"
+	uuid "github.com/hashicorp/go-uuid"
+
 	"github.com/hashicorp/consul/agent/connect"
 	"github.com/hashicorp/consul/agent/connect/ca"
 	"github.com/hashicorp/consul/agent/consul/state"
 	"github.com/hashicorp/consul/agent/structs"
-	"github.com/hashicorp/go-hclog"
-	uuid "github.com/hashicorp/go-uuid"
+	"github.com/hashicorp/consul/lib/routine"
 )
 
 type caState string
@@ -65,7 +67,7 @@ type CAManager struct {
 	primaryRoots      structs.IndexedCARoots // The most recently seen state of the root CAs from the primary datacenter.
 	actingSecondaryCA bool                   // True if this datacenter has been initialized as a secondary CA.
 
-	leaderRoutineManager *LeaderRoutineManager
+	leaderRoutineManager *routine.Manager
 }
 
 type caDelegateWithState struct {
@@ -76,7 +78,7 @@ func (c *caDelegateWithState) State() *state.Store {
 	return c.fsm.State()
 }
 
-func NewCAManager(delegate caServerDelegate, leaderRoutineManager *LeaderRoutineManager, logger hclog.Logger, config *Config) *CAManager {
+func NewCAManager(delegate caServerDelegate, leaderRoutineManager *routine.Manager, logger hclog.Logger, config *Config) *CAManager {
 	return &CAManager{
 		delegate:             delegate,
 		logger:               logger,
@@ -247,7 +249,7 @@ func (c *CAManager) setCAProvider(newProvider ca.Provider, root *structs.CARoot)
 	c.providerLock.Unlock()
 }
 
-func (c *CAManager) Start() {
+func (c *CAManager) Start(ctx context.Context) {
 	// Attempt to initialize the Connect CA now. This will
 	// happen during leader establishment and it would be great
 	// if the CA was ready to go once that process was finished.
@@ -257,11 +259,11 @@ func (c *CAManager) Start() {
 		// we failed to fully initialize the CA so we need to spawn a
 		// go routine to retry this process until it succeeds or we lose
 		// leadership and the go routine gets stopped.
-		c.leaderRoutineManager.Start(backgroundCAInitializationRoutineName, c.backgroundCAInitialization)
+		c.leaderRoutineManager.Start(ctx, backgroundCAInitializationRoutineName, c.backgroundCAInitialization)
 	} else {
 		// We only start these if CA initialization was successful. If not the completion of the
 		// background CA initialization will start these routines.
-		c.startPostInitializeRoutines()
+		c.startPostInitializeRoutines(ctx)
 	}
 }
 
@@ -271,13 +273,13 @@ func (c *CAManager) Stop() {
 	c.leaderRoutineManager.Stop(backgroundCAInitializationRoutineName)
 }
 
-func (c *CAManager) startPostInitializeRoutines() {
+func (c *CAManager) startPostInitializeRoutines(ctx context.Context) {
 	// Start the Connect secondary DC actions if enabled.
 	if c.serverConf.Datacenter != c.serverConf.PrimaryDatacenter {
-		c.leaderRoutineManager.Start(secondaryCARootWatchRoutineName, c.secondaryCARootWatch)
+		c.leaderRoutineManager.Start(ctx, secondaryCARootWatchRoutineName, c.secondaryCARootWatch)
 	}
 
-	c.leaderRoutineManager.Start(intermediateCertRenewWatchRoutineName, c.intermediateCertRenewalWatch)
+	c.leaderRoutineManager.Start(ctx, intermediateCertRenewWatchRoutineName, c.intermediateCertRenewalWatch)
 }
 
 func (c *CAManager) backgroundCAInitialization(ctx context.Context) error {
@@ -294,7 +296,7 @@ func (c *CAManager) backgroundCAInitialization(ctx context.Context) error {
 
 	c.logger.Info("Successfully initialized the Connect CA")
 
-	c.startPostInitializeRoutines()
+	c.startPostInitializeRoutines(ctx)
 	return nil
 }
 
@@ -416,7 +418,7 @@ func (c *CAManager) initializeRootCA(provider ca.Provider, conf *structs.CAConfi
 	if err != nil {
 		return fmt.Errorf("error generating intermediate cert: %v", err)
 	}
-	_, err = connect.ParseCert(interPEM)
+	intermediateCert, err := connect.ParseCert(interPEM)
 	if err != nil {
 		return fmt.Errorf("error getting intermediate cert: %v", err)
 	}
@@ -439,6 +441,13 @@ func (c *CAManager) initializeRootCA(provider ca.Provider, conf *structs.CAConfi
 		}
 	}
 
+	// Versions prior to 1.9.3, 1.8.8, and 1.7.12 incorrectly used the primary
+	// rootCA's subjectKeyID here instead of the intermediate. For
+	// provider=consul this didn't matter since there are no intermediates in
+	// the primaryDC, but for vault it does matter.
+	expectedSigningKeyID := connect.EncodeSigningKeyID(intermediateCert.SubjectKeyId)
+	needsSigningKeyUpdate := (rootCA.SigningKeyID != expectedSigningKeyID)
+
 	// Check if the CA root is already initialized and exit if it is,
 	// adding on any existing intermediate certs since they aren't directly
 	// tied to the provider.
@@ -449,7 +458,10 @@ func (c *CAManager) initializeRootCA(provider ca.Provider, conf *structs.CAConfi
 	if err != nil {
 		return err
 	}
-	if activeRoot != nil {
+	if activeRoot != nil && needsSigningKeyUpdate {
+		c.logger.Info("Correcting stored SigningKeyID value", "previous", rootCA.SigningKeyID, "updated", expectedSigningKeyID)
+
+	} else if activeRoot != nil && !needsSigningKeyUpdate {
 		// This state shouldn't be possible to get into because we update the root and
 		// CA config in the same FSM operation.
 		if activeRoot.ID != rootCA.ID {
@@ -460,6 +472,10 @@ func (c *CAManager) initializeRootCA(provider ca.Provider, conf *structs.CAConfi
 		c.setCAProvider(provider, rootCA)
 
 		return nil
+	}
+
+	if needsSigningKeyUpdate {
+		rootCA.SigningKeyID = expectedSigningKeyID
 	}
 
 	// Get the highest index
@@ -873,12 +889,13 @@ func (c *CAManager) UpdateConfiguration(args *structs.CARequest) (reterr error) 
 				"You can try again with ForceWithoutCrossSigningSet but this may cause " +
 				"disruption - see documentation for more.")
 		}
-		if !canXSign && args.Config.ForceWithoutCrossSigning {
-			c.logger.Warn("current CA doesn't support cross signing but " +
-				"CA reconfiguration forced anyway with ForceWithoutCrossSigning")
+		if args.Config.ForceWithoutCrossSigning {
+			c.logger.Warn("ForceWithoutCrossSigning set, CA reconfiguration skipping cross-signing")
 		}
 
-		if canXSign {
+		// If ForceWithoutCrossSigning wasn't set, attempt to have the old CA generate a
+		// cross-signed intermediate.
+		if canXSign && !args.Config.ForceWithoutCrossSigning {
 			// Have the old provider cross-sign the new root
 			xcCert, err := oldProvider.CrossSignCA(newRoot)
 			if err != nil {
@@ -1054,12 +1071,7 @@ func (c *CAManager) RenewIntermediate(ctx context.Context, isPrimary bool) error
 	// If this is the primary, check if this is a provider that uses an intermediate cert. If
 	// it isn't, we don't need to check for a renewal.
 	if isPrimary {
-		_, config, err := state.CAConfig(nil)
-		if err != nil {
-			return err
-		}
-
-		if _, ok := ca.PrimaryIntermediateProviders[config.Provider]; !ok {
+		if _, ok := provider.(ca.PrimaryUsesIntermediate); !ok {
 			return nil
 		}
 	}

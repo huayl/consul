@@ -1,4 +1,7 @@
-{{page-title item.Service.ID}}
+<Route
+  @name={{routeName}}
+  @title={{item.Service.ID}}
+as |route|>
   <DataLoader as |loader|>
 
     <BlockSlot @name="data">
@@ -10,7 +13,10 @@
     </BlockSlot>
 
     <BlockSlot @name="error">
-      <AppError @error={{loader.error}} />
+      <AppError
+        @error={{loader.error}}
+        @login={{route.model.app.login.open}}
+      />
     </BlockSlot>
 
     <BlockSlot @name="disconnected" as |Notification|>
@@ -19,6 +25,13 @@
           <p data-notification role="alert" class="warning notification-update">
             <strong>Warning!</strong>
             This service has been deregistered and no longer exists in the catalog.
+          </p>
+        </Notification>
+      {{else if (eq loader.error.status "403")}}
+        <Notification @sticky={{true}}>
+          <p data-notification role="alert" class="error notification-update">
+            <strong>Error!</strong>
+            You no longer have access to this service
           </p>
         </Notification>
       {{else}}
@@ -45,6 +58,9 @@
             </h1>
             <Consul::ExternalSource @item={{item}} />
             <Consul::Kind @item={{item}} @withInfo={{true}} />
+            {{#if (eq proxy.ServiceProxy.Mode 'transparent')}}
+              <Consul::TransparentProxy />
+            {{/if}}
           </BlockSlot>
           <BlockSlot @name="nav">
             <dl>
@@ -81,10 +97,12 @@
               }}/>
             <Outlet
               @name={{routeName}}
+              @model={{route.model}}
             as |o|>
               {{outlet}}
             </Outlet>
           </BlockSlot>
       </AppView>
     </BlockSlot>
-</DataLoader>
+  </DataLoader>
+</Route>

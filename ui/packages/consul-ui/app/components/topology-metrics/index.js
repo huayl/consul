@@ -1,6 +1,6 @@
 import Component from '@glimmer/component';
 import { tracked } from '@glimmer/tracking';
-import { action } from '@ember/object';
+import { action, get } from '@ember/object';
 
 export default class TopologyMetrics extends Component {
   // =attributes
@@ -66,7 +66,35 @@ export default class TopologyMetrics extends Component {
       });
   }
 
+  get upstreams() {
+    const upstreams = get(this.args.topology, 'Upstreams') || [];
+    const items = [...upstreams];
+    const defaultAllow = get(this.args.topology, 'DefaultAllow');
+    const wildcardIntention = get(this.args.topology, 'WildcardIntention');
+    if (defaultAllow || wildcardIntention) {
+      items.push({
+        Name: '* (All Services)',
+        Datacenter: '',
+        Namespace: '',
+        Intention: {
+          Allowed: true,
+        },
+      });
+    }
+    return items;
+  }
+
   // =actions
+  @action
+  setHeight(el, item) {
+    if (el) {
+      const container = el.getBoundingClientRect();
+      document.getElementById(`${item[0]}`).setAttribute('style', `height:${container.height}px`);
+    }
+
+    this.calculate();
+  }
+
   @action
   calculate() {
     if (this.args.isRemoteDC) {
@@ -78,13 +106,25 @@ export default class TopologyMetrics extends Component {
     }
 
     // Calculate viewBox dimensions
-    this.downView = document.querySelector('#downstream-lines').getBoundingClientRect();
-    this.upView = document.querySelector('#upstream-lines').getBoundingClientRect();
+    this.downView = document.getElementById('downstream-lines').getBoundingClientRect();
+    const upstreamLines = document.getElementById('upstream-lines').getBoundingClientRect();
+    const upstreamColumn = document.getElementById('upstream-column');
+
+    if (upstreamColumn) {
+      this.upView = {
+        x: upstreamLines.x,
+        y: upstreamLines.y,
+        width: upstreamLines.width,
+        height: upstreamColumn.getBoundingClientRect().height + 10,
+      };
+    }
 
     // Get Card elements positions
-    const downCards = [...document.querySelectorAll('#downstream-container .card')];
+    const downCards = [
+      ...document.querySelectorAll('#downstream-container .topology-metrics-card'),
+    ];
     const grafanaCard = document.querySelector('.metrics-header');
-    const upCards = [...document.querySelectorAll('#upstream-column .card')];
+    const upCards = [...document.querySelectorAll('#upstream-column .topology-metrics-card')];
 
     // Set center positioning points
     this.centerDimensions = grafanaCard.getBoundingClientRect();

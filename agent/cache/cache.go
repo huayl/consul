@@ -25,8 +25,10 @@ import (
 
 	"github.com/armon/go-metrics"
 	"github.com/armon/go-metrics/prometheus"
+	"github.com/hashicorp/go-hclog"
 	"golang.org/x/time/rate"
 
+	"github.com/hashicorp/consul/acl"
 	"github.com/hashicorp/consul/lib"
 	"github.com/hashicorp/consul/lib/ttlcache"
 )
@@ -169,6 +171,8 @@ type ResultMeta struct {
 
 // Options are options for the Cache.
 type Options struct {
+	Logger hclog.Logger
+
 	// EntryFetchMaxBurst max burst size of RateLimit for a single cache entry
 	EntryFetchMaxBurst int
 	// EntryFetchRate represents the max calls/sec for a single cache entry
@@ -187,6 +191,9 @@ func applyDefaultValuesOnOptions(options Options) Options {
 	}
 	if options.EntryFetchMaxBurst == 0 {
 		options.EntryFetchMaxBurst = DefaultEntryFetchMaxBurst
+	}
+	if options.Logger == nil {
+		options.Logger = hclog.New(nil)
 	}
 	return options
 }
@@ -406,6 +413,27 @@ RETRY_GET:
 	_, entryValid, entry := c.getEntryLocked(r.TypeEntry, key, r.Info)
 	c.entriesLock.RUnlock()
 
+	if entry.Expiry != nil {
+		// The entry already exists in the TTL heap, touch it to keep it alive since
+		// this Get is still interested in the value. Note that we used to only do
+		// this in the `entryValid` block below but that means that a cache entry
+		// will expire after it's TTL regardless of how many callers are waiting for
+		// updates in this method in a couple of cases:
+		//  1. If the agent is disconnected from servers for the TTL then the client
+		//     will be in backoff getting errors on each call to Get and since an
+		//     errored cache entry has Valid = false it won't be touching the TTL.
+		//  2. If the value is just not changing then the client's current index
+		//     will be equal to the entry index and entryValid will be false. This
+		//     is a common case!
+		//
+		// But regardless of the state of the entry, assuming it's already in the
+		// TTL heap, we should touch it every time around here since this caller at
+		// least still cares about the value!
+		c.entriesLock.Lock()
+		c.entriesExpiryHeap.Update(entry.Expiry.Index(), r.TypeEntry.Opts.LastGetTTL)
+		c.entriesLock.Unlock()
+	}
+
 	if entryValid {
 		meta := ResultMeta{Index: entry.Index}
 		if first {
@@ -427,11 +455,6 @@ RETRY_GET:
 				meta.Age = time.Since(entry.FetchedAt)
 			}
 		}
-
-		// Touch the expiration and fix the heap.
-		c.entriesLock.Lock()
-		c.entriesExpiryHeap.Update(entry.Expiry.Index(), r.TypeEntry.Opts.LastGetTTL)
-		c.entriesLock.Unlock()
 
 		// We purposely do not return an error here since the cache only works with
 		// fetching values that either have a value or have an error, but not both.
@@ -655,6 +678,8 @@ func (c *Cache) fetch(key string, r getOptions, allowNew bool, attempt uint, ign
 			newEntry.State = result.State
 		}
 
+		preventRefresh := acl.IsErrNotFound(err)
+
 		// Error handling
 		if err == nil {
 			labels := []metrics.Label{{Name: "result_not_modified", Value: strconv.FormatBool(result.NotModified)}}
@@ -688,9 +713,13 @@ func (c *Cache) fetch(key string, r getOptions, allowNew bool, attempt uint, ign
 				newEntry.RefreshLostContact = time.Time{}
 			}
 		} else {
+			// TODO (mkeeler) maybe change the name of this label to be more indicative of it just
+			// stopping the background refresh
+			labels := []metrics.Label{{Name: "fatal", Value: strconv.FormatBool(preventRefresh)}}
+
 			// TODO(kit): Add tEntry.Name to label on fetch_error and deprecate second write
-			metrics.IncrCounter([]string{"consul", "cache", "fetch_error"}, 1)
-			metrics.IncrCounter([]string{"consul", "cache", tEntry.Name, "fetch_error"}, 1)
+			metrics.IncrCounterWithLabels([]string{"consul", "cache", "fetch_error"}, 1, labels)
+			metrics.IncrCounterWithLabels([]string{"consul", "cache", tEntry.Name, "fetch_error"}, 1, labels)
 
 			// Increment attempt counter
 			attempt++
@@ -710,6 +739,22 @@ func (c *Cache) fetch(key string, r getOptions, allowNew bool, attempt uint, ign
 		// Set our entry
 		c.entriesLock.Lock()
 
+		if _, ok := c.entries[key]; !ok {
+			// This entry was evicted during our fetch. DON'T re-insert it or fall
+			// through to the refresh loop below otherwise it will live forever! In
+			// theory there should not be any Get calls waiting on entry.Waiter since
+			// they would have prevented the eviction, but in practice there may be
+			// due to timing and the fact that we don't update the TTL on the entry if
+			// errors are being returned for a while. So we do need to unblock them,
+			// which will mean they recreate the entry again right away and so "reset"
+			// to a good state anyway!
+			c.entriesLock.Unlock()
+
+			// Trigger any waiters that are around.
+			close(entry.Waiter)
+			return
+		}
+
 		// If this is a new entry (not in the heap yet), then setup the
 		// initial expiry information and insert. If we're already in
 		// the heap we do nothing since we're reusing the same entry.
@@ -725,7 +770,13 @@ func (c *Cache) fetch(key string, r getOptions, allowNew bool, attempt uint, ign
 
 		// If refresh is enabled, run the refresh in due time. The refresh
 		// below might block, but saves us from spawning another goroutine.
-		if tEntry.Opts.Refresh {
+		//
+		// We want to have ACL not found errors stop cache refresh for the cases
+		// where the token used for the query was deleted. If the request
+		// was coming from a cache notification then it will start the
+		// request back up again shortly but in the general case this prevents
+		// spamming the logs with tons of ACL not found errors for days.
+		if tEntry.Opts.Refresh && !preventRefresh {
 			// Check if cache was stopped
 			if atomic.LoadUint32(&c.stopped) == 1 {
 				return

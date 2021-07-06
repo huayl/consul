@@ -2,24 +2,21 @@ package xds
 
 import (
 	"fmt"
-	"regexp"
 
-	envoycore "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
+	envoy_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+
 	"github.com/hashicorp/go-version"
 )
 
 var (
 	// minSupportedVersion is the oldest mainline version we support. This should always be
 	// the zero'th point release of the last element of proxysupport.EnvoyVersions.
-	minSupportedVersion = version.Must(version.NewVersion("1.13.0"))
+	minSupportedVersion = version.Must(version.NewVersion("1.15.0"))
 
-	specificUnsupportedVersions = []unsupportedVersion{
-		{
-			Version:   version.Must(version.NewVersion("1.13.0")),
-			UpgradeTo: "1.13.1+",
-			Why:       "does not support RBAC rules using url_path",
-		},
-	}
+	minVersionAllowingEmptyGatewayClustersWithIncrementalXDS = version.Must(version.NewVersion("1.16.0"))
+	minVersionAllowingMultipleIncrementalXDSChanges          = version.Must(version.NewVersion("1.16.0"))
+
+	specificUnsupportedVersions = []unsupportedVersion{}
 )
 
 type unsupportedVersion struct {
@@ -30,9 +27,27 @@ type unsupportedVersion struct {
 
 type supportedProxyFeatures struct {
 	// add version dependent feature flags here
+
+	// GatewaysNeedStubClusterWhenEmptyWithIncrementalXDS is needed to paper
+	// over some weird envoy behavior.
+	//
+	// For some reason Envoy versions prior to 1.16.0 when sent an empty CDS
+	// list via the incremental xDS protocol will correctly ack the message and
+	// just never request LDS resources.
+	GatewaysNeedStubClusterWhenEmptyWithIncrementalXDS bool
+
+	// IncrementalXDSUpdatesMustBeSerial is needed to avoid an envoy crash.
+	//
+	// Versions of Envoy prior to 1.16.0 could crash if multiple in-flight
+	// changes to resources were happening during incremental xDS. To prevent
+	// that we force serial updates on those older versions.
+	//
+	// issue: https://github.com/envoyproxy/envoy/issues/11877
+	// PR:    https://github.com/envoyproxy/envoy/pull/12069
+	IncrementalXDSUpdatesMustBeSerial bool
 }
 
-func determineSupportedProxyFeatures(node *envoycore.Node) (supportedProxyFeatures, error) {
+func determineSupportedProxyFeatures(node *envoy_core_v3.Node) (supportedProxyFeatures, error) {
 	version := determineEnvoyVersionFromNode(node)
 	return determineSupportedProxyFeaturesFromVersion(version)
 }
@@ -65,36 +80,33 @@ func determineSupportedProxyFeaturesFromVersion(version *version.Version) (suppo
 		}
 	}
 
-	return supportedProxyFeatures{}, nil
+	sf := supportedProxyFeatures{}
+
+	if version.LessThan(minVersionAllowingEmptyGatewayClustersWithIncrementalXDS) {
+		sf.GatewaysNeedStubClusterWhenEmptyWithIncrementalXDS = true
+	}
+
+	if version.LessThan(minVersionAllowingMultipleIncrementalXDSChanges) {
+		sf.IncrementalXDSUpdatesMustBeSerial = true
+	}
+
+	return sf, nil
 }
 
-// example: 1580db37e9a97c37e410bad0e1507ae1a0fd9e77/1.12.4/Clean/RELEASE/BoringSSL
-var buildVersionPattern = regexp.MustCompile(`^[a-f0-9]{40}/([^/]+)/Clean/RELEASE/BoringSSL$`)
-
-func determineEnvoyVersionFromNode(node *envoycore.Node) *version.Version {
+func determineEnvoyVersionFromNode(node *envoy_core_v3.Node) *version.Version {
 	if node == nil {
 		return nil
 	}
 
 	if node.UserAgentVersionType == nil {
-		if node.BuildVersion == "" {
-			return nil
-		}
-
-		// Must be an older pre-1.13 envoy
-		m := buildVersionPattern.FindStringSubmatch(node.BuildVersion)
-		if m == nil {
-			return nil
-		}
-
-		return version.Must(version.NewVersion(m[1]))
+		return nil
 	}
 
 	if node.UserAgentName != "envoy" {
 		return nil
 	}
 
-	bv, ok := node.UserAgentVersionType.(*envoycore.Node_UserAgentBuildVersion)
+	bv, ok := node.UserAgentVersionType.(*envoy_core_v3.Node_UserAgentBuildVersion)
 	if !ok {
 		// NOTE: we could sniff for *envoycore.Node_UserAgentVersion and do more regex but official builds don't have this problem.
 		return nil

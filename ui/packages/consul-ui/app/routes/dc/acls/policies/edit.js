@@ -14,22 +14,28 @@ export default class EditRoute extends SingleRoute.extend(WithPolicyActions) {
 
   model(params) {
     const dc = this.modelFor('dc').dc.Name;
-    const nspace = this.modelFor('nspace').nspace.substr(1);
+    const nspace = this.optionalParams().nspace;
     const tokenRepo = this.tokenRepo;
     return super.model(...arguments).then(model => {
       return hash({
         ...model,
         ...{
           routeName: this.routeName,
-          items: tokenRepo.findByPolicy(get(model.item, 'ID'), dc, nspace).catch(function(e) {
-            switch (get(e, 'errors.firstObject.status')) {
-              case '403':
-              case '401':
-                // do nothing the SingleRoute will have caught it already
-                return;
-            }
-            throw e;
-          }),
+          items: tokenRepo
+            .findByPolicy({
+              ns: nspace,
+              dc: dc,
+              id: get(model.item, 'ID'),
+            })
+            .catch(function(e) {
+              switch (get(e, 'errors.firstObject.status')) {
+                case '403':
+                case '401':
+                  // do nothing the SingleRoute will have caught it already
+                  return;
+              }
+              throw e;
+            }),
         },
       });
     });

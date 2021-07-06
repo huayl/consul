@@ -24,6 +24,7 @@ const (
 	FSM                string = "fsm"
 	GatewayLocator     string = "gateway_locator"
 	HTTP               string = "http"
+	IngressGateway     string = "ingress_gateway"
 	Intentions         string = "intentions"
 	Internal           string = "internal"
 	KV                 string = "kvs"
@@ -56,5 +57,6 @@ const (
 	UIMetricsProxy     string = "ui_metrics_proxy"
 	WAN                string = "wan"
 	Watch              string = "watch"
+	XDS                string = "xds"
 	Vault              string = "vault"
 )

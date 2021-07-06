@@ -95,6 +95,14 @@ type BootstrapTplArgs struct {
 	// EnvoyVersion is the envoy version, which is necessary to generate the
 	// correct configuration.
 	EnvoyVersion string
+
+	// PrometheusBackendPort will configure a "prometheus_backend" cluster which
+	// envoy_prometheus_bind_addr will point to.
+	PrometheusBackendPort string
+
+	// PrometheusScrapePath will configure the path where metrics are exposed on
+	// the envoy_prometheus_bind_addr listener.
+	PrometheusScrapePath string
 }
 
 // GRPC settings used in the bootstrap template.
@@ -116,6 +124,8 @@ type GRPC struct {
 	AgentSocket string
 }
 
+// bootstrapTemplate sets '"ignore_health_on_host_removal": false' JUST to force this to be detected as a v3 bootstrap
+// config.
 const bootstrapTemplate = `{
   "admin": {
     "access_log_path": "{{ .AdminAccessLogPath }}",
@@ -138,36 +148,50 @@ const bootstrapTemplate = `{
     "clusters": [
       {
         "name": "{{ .LocalAgentClusterName }}",
+        "ignore_health_on_host_removal": false,
         "connect_timeout": "1s",
         "type": "STATIC",
         {{- if .AgentTLS -}}
-        "tls_context": {
-          "common_tls_context": {
-            "validation_context": {
-              "trusted_ca": {
-                "inline_string": "{{ .AgentCAPEM }}"
+        "transport_socket": {
+          "name": "tls",
+          "typed_config": {
+            "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+            "common_tls_context": {
+              "validation_context": {
+                "trusted_ca": {
+                  "inline_string": "{{ .AgentCAPEM }}"
+                }
               }
             }
           }
         },
         {{- end }}
         "http2_protocol_options": {},
-        "hosts": [
-	  {{- if .AgentSocket -}}
-          {
-            "pipe": {
-              "path": "{{ .AgentSocket }}"
+        "loadAssignment": {
+          "clusterName": "{{ .LocalAgentClusterName }}",
+          "endpoints": [
+            {
+              "lbEndpoints": [
+                {
+                  "endpoint": {
+                    "address": {
+                      {{- if .AgentSocket -}}
+                      "pipe": {
+                        "path": "{{ .AgentSocket }}"
+                      }
+                      {{- else -}}
+                      "socket_address": {
+                        "address": "{{ .AgentAddress }}",
+                        "port_value": {{ .AgentPort }}
+                      }
+                      {{- end -}}
+                    }
+                  }
+                }
+              ]
             }
-          }
-	  {{- else -}}
-          {
-            "socket_address": {
-              "address": "{{ .AgentAddress }}",
-              "port_value": {{ .AgentPort }}
-            }
-          }
-	  {{- end -}}
-        ]
+          ]
+        }
       }
       {{- if .StaticClustersJSON -}}
       ,
@@ -193,10 +217,17 @@ const bootstrapTemplate = `{
   "tracing": {{ .TracingConfigJSON }},
   {{- end }}
   "dynamic_resources": {
-    "lds_config": { "ads": {} },
-    "cds_config": { "ads": {} },
+    "lds_config": {
+      "ads": {},
+      "resource_api_version": "V3"
+    },
+    "cds_config": {
+      "ads": {},
+      "resource_api_version": "V3"
+    },
     "ads_config": {
-      "api_type": "GRPC",
+      "api_type": "DELTA_GRPC",
+      "transport_api_version": "V3",
       "grpc_services": {
         "initial_metadata": [
           {
@@ -209,18 +240,6 @@ const bootstrapTemplate = `{
         }
       }
     }
-  },
-  "layered_runtime":{
-    "layers": [
-      {
-        "name": "static_layer",
-        "static_layer": {
-          "envoy.deprecated_features:envoy.api.v2.Cluster.tls_context": true,
-          "envoy.deprecated_features:envoy.config.trace.v2.ZipkinConfig.HTTP_JSON_V1": true,
-          "envoy.deprecated_features:envoy.config.filter.network.http_connection_manager.v2.HttpConnectionManager.Tracing.operation_name": true
-        }
-      }
-    ]
   }
 }
 `

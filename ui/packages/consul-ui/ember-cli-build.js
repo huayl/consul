@@ -1,41 +1,91 @@
 'use strict';
 const Funnel = require('broccoli-funnel');
 const EmberApp = require('ember-cli/lib/broccoli/ember-app');
+
 module.exports = function(defaults) {
+  // available environments
+  // ['production', 'development', 'staging', 'test'];
+
   const env = EmberApp.env();
   const prodlike = ['production', 'staging'];
-  const isProd = env === 'production';
-  const isProdLike = prodlike.indexOf(env) > -1;
-  const sourcemaps = !isProd;
-  let trees = {};
-  if (isProdLike) {
-    // exclude any component/pageobject.js files from production-like environments
-    trees.app = new Funnel('app', {
-      exclude: [
-        'components/**/pageobject.js',
-        'components/**/*.test-support.js',
-        'components/**/*.test.js',
-      ],
-    });
+  const sourcemaps = !['production'].includes(env);
+
+  const trees = {};
+  const addons = {};
+  const outputPaths = {};
+  let excludeFiles = [];
+
+  const babel = {
+    plugins: [
+      '@babel/plugin-proposal-object-rest-spread',
+    ],
+    sourceMaps: sourcemaps ? 'inline' : false,
   }
-  let app = new EmberApp(
+
+  // setup up different build configuration depending on environment
+  if(!['test'].includes(env)) {
+    // exclude any component/pageobject.js files from anything but test
+    excludeFiles = excludeFiles.concat([
+      'components/**/pageobject.js',
+      'components/**/*.test-support.js',
+      'components/**/*.test.js',
+    ])
+  }
+
+  if(['test', 'production'].includes(env)) {
+    // exclude our debug initializer, route and template
+    excludeFiles = excludeFiles.concat([
+      'instance-initializers/debug.js',
+      'templates/debug.hbs',
+      'components/debug/**/*.*'
+    ])
+    // exclude any debug like addons from production or test environments
+    addons.blacklist = [
+      // exclude docfy
+      '@docfy/ember'
+    ];
+  } else {
+    // add debug css is we are not in test or production environments
+    outputPaths.app = {
+      css: {
+        'debug': '/assets/debug.css'
+      }
+    }
+  }
+  if(['production'].includes(env)) {
+    // everything apart from production is 'debug', including test
+    // which means this and everything it affects is never tested
+    babel.plugins.push(
+      ['strip-function-call', {'strip': ['Ember.runInDebug']}]
+    )
+  }
+  //
+
+  trees.app = new Funnel('app', {
+    exclude: excludeFiles
+  });
+
+  const app = new EmberApp(
     Object.assign({}, defaults, {
       productionEnvironments: prodlike,
     }),
     {
       trees: trees,
+      addons: addons,
+      outputPaths: outputPaths,
       'ember-cli-babel': {
         includePolyfill: true,
       },
       'ember-cli-string-helpers': {
-        only: ['capitalize', 'lowercase', 'truncate', 'uppercase', 'humanize', 'titleize'],
+        only: ['capitalize', 'lowercase', 'truncate', 'uppercase', 'humanize', 'titleize', 'classify'],
       },
       'ember-cli-math-helpers': {
         only: ['div'],
       },
-      babel: {
-        plugins: ['@babel/plugin-proposal-object-rest-spread'],
-        sourceMaps: sourcemaps ? 'inline' : false,
+      babel: babel,
+      autoImport: {
+        // allows use of a CSP without 'unsafe-eval' directive
+        forbidEval: true,
       },
       codemirror: {
         keyMaps: ['sublime'],
@@ -57,11 +107,6 @@ module.exports = function(defaults) {
       sassOptions: {
         implementation: require('sass'),
         sourceMapEmbed: sourcemaps,
-      },
-      autoprefixer: {
-        sourcemap: sourcemaps,
-        grid: true,
-        browsers: ['defaults', 'ie 11'],
       },
     }
   );
@@ -119,6 +164,5 @@ module.exports = function(defaults) {
   app.import('vendor/init.js', {
     outputFile: 'assets/init.js',
   });
-  let tree = app.toTree();
-  return tree;
+  return app.toTree();
 };

@@ -3,34 +3,30 @@ package xds
 import (
 	"testing"
 
-	envoycore "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
-	envoytype "github.com/envoyproxy/go-control-plane/envoy/type"
-	"github.com/hashicorp/consul/sdk/testutil"
+	envoy_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	envoy_type_v3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+
 	"github.com/hashicorp/go-version"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hashicorp/consul/sdk/testutil"
 )
 
 func TestDetermineEnvoyVersionFromNode(t *testing.T) {
 	cases := map[string]struct {
-		node   *envoycore.Node
+		node   *envoy_core_v3.Node
 		expect *version.Version
 	}{
 		"empty": {
-			node:   &envoycore.Node{},
+			node:   &envoy_core_v3.Node{},
 			expect: nil,
 		},
-		"only build version": {
-			node: &envoycore.Node{
-				BuildVersion: "1580db37e9a97c37e410bad0e1507ae1a0fd9e77/1.9.0/Clean/RELEASE/BoringSSL",
-			},
-			expect: version.Must(version.NewVersion("1.9.0")),
-		},
 		"user agent build version but no user agent": {
-			node: &envoycore.Node{
+			node: &envoy_core_v3.Node{
 				UserAgentName: "",
-				UserAgentVersionType: &envoycore.Node_UserAgentBuildVersion{
-					UserAgentBuildVersion: &envoycore.BuildVersion{
-						Version: &envoytype.SemanticVersion{
+				UserAgentVersionType: &envoy_core_v3.Node_UserAgentBuildVersion{
+					UserAgentBuildVersion: &envoy_core_v3.BuildVersion{
+						Version: &envoy_type_v3.SemanticVersion{
 							MajorNumber: 1,
 							MinorNumber: 14,
 							Patch:       4,
@@ -41,11 +37,11 @@ func TestDetermineEnvoyVersionFromNode(t *testing.T) {
 			expect: nil,
 		},
 		"user agent build version with user agent": {
-			node: &envoycore.Node{
+			node: &envoy_core_v3.Node{
 				UserAgentName: "envoy",
-				UserAgentVersionType: &envoycore.Node_UserAgentBuildVersion{
-					UserAgentBuildVersion: &envoycore.BuildVersion{
-						Version: &envoytype.SemanticVersion{
+				UserAgentVersionType: &envoy_core_v3.Node_UserAgentBuildVersion{
+					UserAgentBuildVersion: &envoy_core_v3.BuildVersion{
+						Version: &envoy_type_v3.SemanticVersion{
 							MajorNumber: 1,
 							MinorNumber: 14,
 							Patch:       4,
@@ -94,14 +90,37 @@ func TestDetermineSupportedProxyFeaturesFromString(t *testing.T) {
 		"1.12.5": {expectErr: "Envoy 1.12.5 " + errTooOld},
 		"1.12.6": {expectErr: "Envoy 1.12.6 " + errTooOld},
 		"1.12.7": {expectErr: "Envoy 1.12.7 " + errTooOld},
-		"1.13.0": {expectErr: "Envoy 1.13.0 " + err1_13},
+		"1.13.0": {expectErr: "Envoy 1.13.0 " + errTooOld},
+		"1.13.1": {expectErr: "Envoy 1.13.1 " + errTooOld},
+		"1.13.2": {expectErr: "Envoy 1.13.2 " + errTooOld},
+		"1.13.3": {expectErr: "Envoy 1.13.3 " + errTooOld},
+		"1.13.4": {expectErr: "Envoy 1.13.4 " + errTooOld},
+		"1.13.5": {expectErr: "Envoy 1.13.5 " + errTooOld},
+		"1.13.6": {expectErr: "Envoy 1.13.6 " + errTooOld},
+		"1.13.7": {expectErr: "Envoy 1.13.7 " + errTooOld},
+		"1.14.0": {expectErr: "Envoy 1.14.0 " + errTooOld},
+		"1.14.1": {expectErr: "Envoy 1.14.1 " + errTooOld},
+		"1.14.2": {expectErr: "Envoy 1.14.2 " + errTooOld},
+		"1.14.3": {expectErr: "Envoy 1.14.3 " + errTooOld},
+		"1.14.4": {expectErr: "Envoy 1.14.4 " + errTooOld},
+		"1.14.5": {expectErr: "Envoy 1.14.5 " + errTooOld},
+		"1.14.6": {expectErr: "Envoy 1.14.6 " + errTooOld},
+		"1.14.7": {expectErr: "Envoy 1.14.7 " + errTooOld},
 	}
 
 	// Insert a bunch of valid versions.
 	for _, v := range []string{
-		"1.13.1", "1.13.2", "1.13.3", "1.13.4", "1.13.6", "1.14.1",
-		"1.14.2", "1.14.3", "1.14.4", "1.14.5",
-		"1.15.0", "1.15.1", "1.15.2", "1.16.0",
+		"1.15.0", "1.15.1", "1.15.2", "1.15.3", "1.15.4", "1.15.5",
+	} {
+		cases[v] = testcase{expect: supportedProxyFeatures{
+			GatewaysNeedStubClusterWhenEmptyWithIncrementalXDS: true,
+			IncrementalXDSUpdatesMustBeSerial:                  true,
+		}}
+	}
+	for _, v := range []string{
+		"1.16.0", "1.16.1", "1.16.2", "1.16.3", "1.16.4",
+		"1.17.0", "1.17.1", "1.17.2", "1.17.3",
+		"1.18.0", "1.18.1", "1.18.2", "1.18.3",
 	} {
 		cases[v] = testcase{expect: supportedProxyFeatures{}}
 	}

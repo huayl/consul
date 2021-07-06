@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"regexp"
 
+	"github.com/hashicorp/go-memdb"
+
 	"github.com/hashicorp/consul/agent/consul/prepared_query"
 	"github.com/hashicorp/consul/agent/structs"
-	"github.com/hashicorp/go-memdb"
 )
 
 // preparedQueriesTableSchema returns a new table schema used for storing
@@ -48,10 +49,6 @@ func preparedQueriesTableSchema() *memdb.TableSchema {
 			},
 		},
 	}
-}
-
-func init() {
-	registerSchema(preparedQueriesTableSchema)
 }
 
 // validUUID is used to check if a given string looks like a UUID
@@ -142,7 +139,7 @@ func (s *Store) PreparedQuerySet(idx uint64, query *structs.PreparedQuery) error
 
 // preparedQuerySetTxn is the inner method used to insert a prepared query with
 // the proper indexes into the state store.
-func preparedQuerySetTxn(tx *txn, idx uint64, query *structs.PreparedQuery) error {
+func preparedQuerySetTxn(tx WriteTxn, idx uint64, query *structs.PreparedQuery) error {
 	// Check that the ID is set.
 	if query.ID == "" {
 		return ErrMissingQueryID
@@ -237,7 +234,7 @@ func preparedQuerySetTxn(tx *txn, idx uint64, query *structs.PreparedQuery) erro
 	if err := tx.Insert("prepared-queries", &queryWrapper{query, ct}); err != nil {
 		return fmt.Errorf("failed inserting prepared query: %s", err)
 	}
-	if err := tx.Insert("index", &IndexEntry{"prepared-queries", idx}); err != nil {
+	if err := tx.Insert(tableIndex, &IndexEntry{"prepared-queries", idx}); err != nil {
 		return fmt.Errorf("failed updating index: %s", err)
 	}
 
@@ -272,7 +269,7 @@ func preparedQueryDeleteTxn(tx WriteTxn, idx uint64, queryID string) error {
 	if err := tx.Delete("prepared-queries", wrapped); err != nil {
 		return fmt.Errorf("failed prepared query delete: %s", err)
 	}
-	if err := tx.Insert("index", &IndexEntry{"prepared-queries", idx}); err != nil {
+	if err := tx.Insert(tableIndex, &IndexEntry{"prepared-queries", idx}); err != nil {
 		return fmt.Errorf("failed updating index: %s", err)
 	}
 

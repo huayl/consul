@@ -6,6 +6,7 @@ import {
   collection,
   text,
   isPresent,
+  isVisible,
 } from 'ember-cli-page-object';
 
 import { alias } from 'ember-cli-page-object/macros';
@@ -42,6 +43,7 @@ import consulUpstreamInstanceListFactory from 'consul-ui/components/consul/upstr
 import consulTokenListFactory from 'consul-ui/components/consul/token/list/pageobject';
 import consulRoleListFactory from 'consul-ui/components/consul/role/list/pageobject';
 import consulPolicyListFactory from 'consul-ui/components/consul/policy/list/pageobject';
+import consulAuthMethodListFactory from 'consul-ui/components/consul/auth-method/list/pageobject';
 import consulIntentionListFactory from 'consul-ui/components/consul/intention/list/pageobject';
 import consulNspaceListFactory from 'consul-ui/components/consul/nspace/list/pageobject';
 import consulKvListFactory from 'consul-ui/components/consul/kv/list/pageobject';
@@ -65,6 +67,7 @@ import roles from 'consul-ui/tests/pages/dc/acls/roles/index';
 import role from 'consul-ui/tests/pages/dc/acls/roles/edit';
 import tokens from 'consul-ui/tests/pages/dc/acls/tokens/index';
 import token from 'consul-ui/tests/pages/dc/acls/tokens/edit';
+import authMethods from 'consul-ui/tests/pages/dc/acls/auth-methods/index';
 import intentions from 'consul-ui/tests/pages/dc/intentions/index';
 import intention from 'consul-ui/tests/pages/dc/intentions/edit';
 import nspaces from 'consul-ui/tests/pages/dc/nspaces/index';
@@ -90,6 +93,7 @@ const emptyState = emptyStateFactory(isPresent);
 
 const consulHealthCheckList = consulHealthCheckListFactory(collection, text);
 const consulUpstreamInstanceList = consulUpstreamInstanceListFactory(collection, text);
+const consulAuthMethodList = consulAuthMethodListFactory(collection, clickable, text);
 const consulIntentionList = consulIntentionListFactory(
   collection,
   clickable,
@@ -152,12 +156,24 @@ export default {
       radiogroup
     )
   ),
-  service: create(service(visitable, clickable, attribute, collection, text, consulIntentionList, tabgroup)),
+  service: create(
+    service(
+      visitable,
+      clickable,
+      attribute,
+      isPresent,
+      collection,
+      text,
+      consulIntentionList,
+      tabgroup
+    )
+  ),
   instance: create(
     instance(
       visitable,
       alias,
       attribute,
+      isPresent,
       collection,
       text,
       tabgroup,
@@ -171,7 +187,9 @@ export default {
       visitable,
       deletable,
       clickable,
+      alias,
       attribute,
+      isPresent,
       collection,
       tabgroup,
       text,
@@ -179,7 +197,7 @@ export default {
     )
   ),
   kvs: create(kvs(visitable, creatable, consulKvList)),
-  kv: create(kv(visitable, attribute, submitable, deletable, cancelable, clickable)),
+  kv: create(kv(visitable, attribute, isPresent, submitable, deletable, cancelable, clickable)),
   acls: create(acls(visitable, deletable, creatable, clickable, attribute, collection)),
   acl: create(acl(visitable, submitable, deletable, cancelable, clickable)),
   policies: create(policies(visitable, creatable, consulPolicyList, popoverSelect)),
@@ -191,6 +209,7 @@ export default {
   token: create(
     token(visitable, submitable, deletable, cancelable, clickable, policySelector, roleSelector)
   ),
+  authMethods: create(authMethods(visitable, creatable, consulAuthMethodList, popoverSelect)),
   intentions: create(
     intentions(visitable, creatable, clickable, consulIntentionList, popoverSelect)
   ),
@@ -198,7 +217,7 @@ export default {
     intention(
       visitable,
       clickable,
-      isPresent,
+      isVisible,
       submitable,
       deletable,
       cancelable,

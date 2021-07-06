@@ -13,7 +13,7 @@ export default Route.extend({
       typeof repo !== 'undefined'
     );
     const dc = this.modelFor('dc').dc.Name;
-    const nspace = this.modelFor('nspace').nspace.substr(1);
+    const nspace = this.optionalParams().nspace;
     const create = this.isCreate(...arguments);
     return hash({
       dc: dc,
@@ -27,7 +27,11 @@ export default Route.extend({
                 Namespace: nspace,
               })
             )
-          : repo.findBySlug(params.id, dc, nspace),
+          : repo.findBySlug({
+              ns: nspace,
+              dc: dc,
+              id: params.id,
+            }),
       }),
     });
   },

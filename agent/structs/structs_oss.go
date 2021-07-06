@@ -46,11 +46,27 @@ func (m *EnterpriseMeta) NamespaceOrDefault() string {
 	return IntentionDefaultNamespace
 }
 
+func NamespaceOrDefault(_ string) string {
+	return IntentionDefaultNamespace
+}
+
 func (m *EnterpriseMeta) NamespaceOrEmpty() string {
 	return ""
 }
 
-func EnterpriseMetaInitializer(_ string) EnterpriseMeta {
+func (m *EnterpriseMeta) PartitionOrDefault() string {
+	return ""
+}
+
+func PartitionOrDefault(_ string) string {
+	return ""
+}
+
+func (m *EnterpriseMeta) PartitionOrEmpty() string {
+	return ""
+}
+
+func NewEnterpriseMeta(_ string) EnterpriseMeta {
 	return emptyEnterpriseMeta
 }
 
@@ -73,11 +89,6 @@ func WildcardEnterpriseMeta() *EnterpriseMeta {
 func (_ *EnterpriseMeta) FillAuthzContext(_ *acl.AuthorizerContext) {}
 
 func (_ *EnterpriseMeta) Normalize() {}
-
-// GetNamespace always returns the empty string.
-func (_ *EnterpriseMeta) GetNamespace() string {
-	return ""
-}
 
 // FillAuthzContext stub
 func (_ *DirEntry) FillAuthzContext(_ *acl.AuthorizerContext) {}
@@ -154,4 +165,12 @@ func (s *Session) CheckIDs() []types.CheckID {
 		checks = append(checks, types.CheckID(c.ID))
 	}
 	return checks
+}
+
+func (t *Intention) HasWildcardSource() bool {
+	return t.SourceName == WildcardSpecifier
+}
+
+func (t *Intention) HasWildcardDestination() bool {
+	return t.DestinationName == WildcardSpecifier
 }

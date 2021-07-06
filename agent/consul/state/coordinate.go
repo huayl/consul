@@ -3,9 +3,10 @@ package state
 import (
 	"fmt"
 
+	"github.com/hashicorp/go-memdb"
+
 	"github.com/hashicorp/consul/agent/structs"
 	"github.com/hashicorp/consul/lib"
-	"github.com/hashicorp/go-memdb"
 )
 
 // coordinatesTableSchema returns a new table schema used for storing
@@ -45,10 +46,6 @@ func coordinatesTableSchema() *memdb.TableSchema {
 			},
 		},
 	}
-}
-
-func init() {
-	registerSchema(coordinatesTableSchema)
 }
 
 // Coordinates is used to pull all the coordinates from the snapshot.
@@ -149,7 +146,7 @@ func (s *Store) CoordinateBatchUpdate(idx uint64, updates structs.Coordinates) e
 		// don't carefully sequence this, and since it will fix itself
 		// on the next coordinate update from that node, we don't return
 		// an error or log anything.
-		node, err := tx.First("nodes", "id", update.Node)
+		node, err := tx.First(tableNodes, indexID, Query{Value: update.Node})
 		if err != nil {
 			return fmt.Errorf("failed node lookup: %s", err)
 		}
@@ -163,7 +160,7 @@ func (s *Store) CoordinateBatchUpdate(idx uint64, updates structs.Coordinates) e
 	}
 
 	// Update the index.
-	if err := tx.Insert("index", &IndexEntry{"coordinates", idx}); err != nil {
+	if err := tx.Insert(tableIndex, &IndexEntry{"coordinates", idx}); err != nil {
 		return fmt.Errorf("failed updating index: %s", err)
 	}
 

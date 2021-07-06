@@ -1,5 +1,9 @@
 {{yield}}
-<fieldset ...attributes>
+<fieldset
+  class="policy-form"
+  disabled={{if (not (can "write policy" item=item)) "disabled"}}
+  ...attributes
+>
   {{#yield-slot name='template'}}
   {{else}}
     <header>

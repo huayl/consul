@@ -1,10 +1,15 @@
 import Service, { inject as service } from '@ember/service';
 import { assert } from '@ember/debug';
 import { typeOf } from '@ember/utils';
-import { get } from '@ember/object';
+import { get, set } from '@ember/object';
 import { isChangeset } from 'validated-changeset';
+import HTTPError from 'consul-ui/utils/http/error';
+import { ACCESS_READ } from 'consul-ui/abilities/base';
 
 export default class RepositoryService extends Service {
+  @service('store') store;
+  @service('repository/permission') permissions;
+
   getModelName() {
     assert('RepositoryService.getModelName should be overridden', false);
   }
@@ -17,9 +22,49 @@ export default class RepositoryService extends Service {
     assert('RepositoryService.getSlugKey should be overridden', false);
   }
 
-  //
-  @service('store')
-  store;
+  /**
+   * Creates a set of permissions based on an id/slug, loads in the access
+   * permissions for them and checks/validates
+   */
+  async authorizeBySlug(cb, access, params) {
+    params.resources = await this.permissions.findBySlug(params, this.getModelName());
+    return this.validatePermissions(cb, access, params);
+  }
+
+  /**
+   * Loads in the access permissions and checks/validates them for a set of
+   * permissions
+   */
+  async authorizeByPermissions(cb, access, params) {
+    params.resources = await this.permissions.authorize(params);
+    return this.validatePermissions(cb, access, params);
+  }
+
+  /**
+   * Checks already loaded permissions for certain access before calling cb to
+   * return the thing you wanted to check the permissions on
+   */
+  async validatePermissions(cb, access, params) {
+    // inspect the permissions for this segment/slug remotely, if we have zero
+    // permissions fire a fake 403 so we don't even request the model/resource
+    if (params.resources.length > 0) {
+      const resource = params.resources.find(item => item.Access === access);
+      if (resource && resource.Allow === false) {
+        // TODO: Here we temporarily make a hybrid HTTPError/ember-data HTTP error
+        // we should eventually use HTTPError's everywhere
+        const e = new HTTPError(403);
+        e.errors = [{ status: '403' }];
+        throw e;
+      }
+    }
+    const item = await cb();
+    // add the `Resource` information to the record/model so we can inspect
+    // them in other places like templates etc
+    if (get(item, 'Resources')) {
+      set(item, 'Resources', params.resources);
+    }
+    return item;
+  }
 
   reconcile(meta = {}) {
     // unload anything older than our current sync date/time
@@ -47,29 +92,30 @@ export default class RepositoryService extends Service {
     return this.store.peekRecord(this.getModelName(), id);
   }
 
-  findAllByDatacenter(dc, nspace, configuration = {}) {
-    const query = {
-      dc: dc,
-      ns: nspace,
-    };
+  findAllByDatacenter(params, configuration = {}) {
     if (typeof configuration.cursor !== 'undefined') {
-      query.index = configuration.cursor;
-      query.uri = configuration.uri;
+      params.index = configuration.cursor;
+      params.uri = configuration.uri;
     }
-    return this.store.query(this.getModelName(), query);
+    return this.store.query(this.getModelName(), params);
   }
 
-  findBySlug(slug, dc, nspace, configuration = {}) {
-    const query = {
-      dc: dc,
-      ns: nspace,
-      id: slug,
-    };
-    if (typeof configuration.cursor !== 'undefined') {
-      query.index = configuration.cursor;
-      query.uri = configuration.uri;
+  async findBySlug(params, configuration = {}) {
+    if (params.id === '') {
+      return this.create({
+        Datacenter: params.dc,
+        Namespace: params.ns,
+      });
     }
-    return this.store.queryRecord(this.getModelName(), query);
+    if (typeof configuration.cursor !== 'undefined') {
+      params.index = configuration.cursor;
+      params.uri = configuration.uri;
+    }
+    return this.authorizeBySlug(
+      () => this.store.queryRecord(this.getModelName(), params),
+      ACCESS_READ,
+      params
+    );
   }
 
   create(obj) {

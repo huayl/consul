@@ -6,28 +6,43 @@ import (
 	"github.com/hashicorp/go-memdb"
 )
 
-// schemaFn is an interface function used to create and return
-// new memdb schema structs for constructing an in-memory db.
-type schemaFn func() *memdb.TableSchema
+// newDBSchema creates and returns the memdb schema for the Store.
+func newDBSchema() *memdb.DBSchema {
+	db := &memdb.DBSchema{Tables: make(map[string]*memdb.TableSchema)}
 
-// schemas is used to register schemas with the state store.
-var schemas []schemaFn
-
-// registerSchema registers a new schema with the state store. This should
-// get called at package init() time.
-func registerSchema(fn schemaFn) {
-	schemas = append(schemas, fn)
+	addTableSchemas(db,
+		authMethodsTableSchema,
+		autopilotConfigTableSchema,
+		bindingRulesTableSchema,
+		caBuiltinProviderTableSchema,
+		caConfigTableSchema,
+		caRootTableSchema,
+		checksTableSchema,
+		configTableSchema,
+		coordinatesTableSchema,
+		federationStateTableSchema,
+		gatewayServicesTableSchema,
+		indexTableSchema,
+		intentionsTableSchema,
+		kvsTableSchema,
+		meshTopologyTableSchema,
+		nodesTableSchema,
+		policiesTableSchema,
+		preparedQueriesTableSchema,
+		rolesTableSchema,
+		servicesTableSchema,
+		sessionChecksTableSchema,
+		sessionsTableSchema,
+		systemMetadataTableSchema,
+		tokensTableSchema,
+		tombstonesTableSchema,
+		usageTableSchema,
+	)
+	withEnterpriseSchema(db)
+	return db
 }
 
-// stateStoreSchema is used to return the combined schema for
-// the state store.
-func stateStoreSchema() *memdb.DBSchema {
-	// Create the root DB schema
-	db := &memdb.DBSchema{
-		Tables: make(map[string]*memdb.TableSchema),
-	}
-
-	// Add the tables to the root schema
+func addTableSchemas(db *memdb.DBSchema, schemas ...func() *memdb.TableSchema) {
 	for _, fn := range schemas {
 		schema := fn()
 		if _, ok := db.Tables[schema.Name]; ok {
@@ -35,18 +50,29 @@ func stateStoreSchema() *memdb.DBSchema {
 		}
 		db.Tables[schema.Name] = schema
 	}
-	withEnterpriseSchema(db)
-	return db
 }
 
-// indexTableSchema returns a new table schema used for tracking various indexes
-// for the Raft log.
+// IndexEntry keeps a record of the last index of a table or entity within a table.
+type IndexEntry struct {
+	Key   string
+	Value uint64
+}
+
+const tableIndex = "index"
+
+// indexTableSchema returns a new table schema used for tracking various the
+// latest raft index for a table or entities within a table.
+//
+// The index table is necessary for tables that do not use tombstones. If the latest
+// items in the table are deleted, the max index of a table would appear to go
+// backwards. With the index table we can keep track of the latest update to a
+// table, even when that update is a delete of the most recent item.
 func indexTableSchema() *memdb.TableSchema {
 	return &memdb.TableSchema{
-		Name: "index",
+		Name: tableIndex,
 		Indexes: map[string]*memdb.IndexSchema{
-			"id": {
-				Name:         "id",
+			indexID: {
+				Name:         indexID,
 				AllowMissing: false,
 				Unique:       true,
 				Indexer: &memdb.StringFieldIndex{
@@ -56,8 +82,4 @@ func indexTableSchema() *memdb.TableSchema {
 			},
 		},
 	}
-}
-
-func init() {
-	registerSchema(indexTableSchema)
 }

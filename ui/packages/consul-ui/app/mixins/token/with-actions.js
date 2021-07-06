@@ -8,11 +8,11 @@ export default Mixin.create(WithBlockingActions, {
   actions: {
     use: function(item) {
       return this.repo
-        .findBySlug(
-          get(item, 'AccessorID'),
-          this.modelFor('dc').dc.Name,
-          this.modelFor('nspace').nspace.substr(1)
-        )
+        .findBySlug({
+          dc: this.modelFor('dc').dc.Name,
+          ns: get(item, 'Namespace'),
+          id: get(item, 'AccessorID'),
+        })
         .then(item => {
           return this.settings.persist({
             token: {

@@ -9,12 +9,27 @@ readonly HASHICORP_DOCKER_PROXY="docker.mirror.hashicorp.services"
 # DEBUG=1 enables set -x for this script so echos every command run
 DEBUG=${DEBUG:-}
 
+OLD_XDSV2_AWARE_CONSUL_VERSION="${OLD_XDSV2_AWARE_CONSUL_VERSION:-"${HASHICORP_DOCKER_PROXY}/library/consul:1.9.5"}"
+export OLD_XDSV2_AWARE_CONSUL_VERSION
+
+# TEST_V2_XDS=1 causes it to do just the 'consul connect envoy' part using
+# the consul version in $OLD_XDSV2_AWARE_CONSUL_VERSION
+TEST_V2_XDS=${TEST_V2_XDS:-}
+export TEST_V2_XDS
+
 # ENVOY_VERSION to run each test against
-ENVOY_VERSION=${ENVOY_VERSION:-"1.16.0"}
+ENVOY_VERSION=${ENVOY_VERSION:-"1.18.3"}
 export ENVOY_VERSION
 
 if [ ! -z "$DEBUG" ] ; then
   set -x
+fi
+
+if [[ -n "$TEST_V2_XDS" ]] ; then
+    if [[ ! "${ENVOY_VERSION}" =~ ^1\.1[456]\. ]]; then
+        echo "Envoy version ${ENVOY_VERSION} is not compatible with Consul 1.9.1 so we cannot test the xDS v2 fallback code"
+        exit 1
+    fi
 fi
 
 source helpers.bash
@@ -127,6 +142,15 @@ function start_consul {
         '-p=9502:8502'
       )
   fi
+  
+  license="${CONSUL_LICENSE:-}"
+  # load the consul license so we can pass it into the consul
+  # containers as an env var in the case that this is a consul
+  # enterprise test
+  if test -z "$license" -a -n "${CONSUL_LICENSE_PATH:-}"
+  then
+    license=$(cat $CONSUL_LICENSE_PATH)
+  fi
 
   # Run consul and expose some ports to the host to make debugging locally a
   # bit easier.
@@ -136,6 +160,7 @@ function start_consul {
     $WORKDIR_SNIPPET \
     --hostname "consul-${DC}" \
     --network-alias "consul-${DC}" \
+    -e "CONSUL_LICENSE=$license" \
     ${ports[@]} \
     consul-dev \
     agent -dev -datacenter "${DC}" \

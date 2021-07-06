@@ -152,6 +152,39 @@ function assert_envoy_version {
   echo $VERSION | grep "/$ENVOY_VERSION/"
 }
 
+function assert_envoy_expose_checks_listener_count {
+  local HOSTPORT=$1
+  local EXPECT_PATH=$2
+
+  # scrape this once
+  BODY=$(get_envoy_expose_checks_listener_once $HOSTPORT)
+  echo "BODY = $BODY"
+
+  CHAINS=$(echo "$BODY" | jq '.active_state.listener.filter_chains | length')
+  echo "CHAINS = $CHAINS (expect 1)"
+  [ "${CHAINS:-0}" -eq 1 ]
+
+  RANGES=$(echo "$BODY" | jq '.active_state.listener.filter_chains[0].filter_chain_match.source_prefix_ranges | length')
+  echo "RANGES = $RANGES (expect 3)"
+  # note: if IPv6 is not supported in the kernel per
+  # agent/xds:kernelSupportsIPv6() then this will only be 2
+  [ "${RANGES:-0}" -eq 3 ]
+
+  HCM=$(echo "$BODY" | jq '.active_state.listener.filter_chains[0].filters[0]')
+  HCM_NAME=$(echo "$HCM" | jq -r '.name')
+  HCM_PATH=$(echo "$HCM" | jq -r '.typed_config.route_config.virtual_hosts[0].routes[0].match.path')
+  echo "HCM = $HCM"
+  [ "${HCM_NAME:-}" == "envoy.filters.network.http_connection_manager" ]
+  [ "${HCM_PATH:-}" == "${EXPECT_PATH}" ]
+}
+
+function get_envoy_expose_checks_listener_once {
+  local HOSTPORT=$1
+  run curl -s -f $HOSTPORT/config_dump
+  [ "$status" -eq 0 ]
+  echo "$output" | jq --raw-output '.configs[] | select(.["@type"] == "type.googleapis.com/envoy.admin.v3.ListenersConfigDump") | .dynamic_listeners[] | select(.name | startswith("exposed_path_"))'
+}
+
 function assert_envoy_http_rbac_policy_count {
   local HOSTPORT=$1
   local EXPECT_COUNT=$2
@@ -165,7 +198,7 @@ function get_envoy_http_rbac_once {
   local HOSTPORT=$1
   run curl -s -f $HOSTPORT/config_dump
   [ "$status" -eq 0 ]
-  echo "$output" | jq --raw-output '.configs[2].dynamic_listeners[].active_state.listener.filter_chains[0].filters[0].config.http_filters[] | select(.name == "envoy.filters.http.rbac") | .config'
+  echo "$output" | jq --raw-output '.configs[2].dynamic_listeners[].active_state.listener.filter_chains[0].filters[0].typed_config.http_filters[] | select(.name == "envoy.filters.http.rbac") | .typed_config'
 }
 
 function assert_envoy_network_rbac_policy_count {
@@ -181,7 +214,7 @@ function get_envoy_network_rbac_once {
   local HOSTPORT=$1
   run curl -s -f $HOSTPORT/config_dump
   [ "$status" -eq 0 ]
-  echo "$output" | jq --raw-output '.configs[2].dynamic_listeners[].active_state.listener.filter_chains[0].filters[] | select(.name == "envoy.filters.network.rbac") | .config'
+  echo "$output" | jq --raw-output '.configs[2].dynamic_listeners[].active_state.listener.filter_chains[0].filters[] | select(.name == "envoy.filters.network.rbac") | .typed_config'
 }
 
 function get_envoy_listener_filters {
@@ -195,7 +228,34 @@ function get_envoy_http_filters {
   local HOSTPORT=$1
   run retry_default curl -s -f $HOSTPORT/config_dump
   [ "$status" -eq 0 ]
-  echo "$output" | jq --raw-output '.configs[2].dynamic_listeners[].active_state.listener | "\(.name) \( .filter_chains[0].filters[] | select(.name == "envoy.http_connection_manager") | .config.http_filters | map(.name) | join(","))"'
+  echo "$output" | jq --raw-output '.configs[2].dynamic_listeners[].active_state.listener | "\(.name) \( .filter_chains[0].filters[] | select(.name == "envoy.filters.network.http_connection_manager") | .typed_config.http_filters | map(.name) | join(","))"'
+}
+
+function get_envoy_dynamic_cluster_once {
+  local HOSTPORT=$1
+  local NAME_PREFIX=$2
+  run curl -s -f $HOSTPORT/config_dump
+  [ "$status" -eq 0 ]
+  echo "$output" | jq --raw-output ".configs[] | select (.[\"@type\"] == \"type.googleapis.com/envoy.admin.v3.ClustersConfigDump\") | .dynamic_active_clusters[] | select(.cluster.name | startswith(\"${NAME_PREFIX}\"))"
+}
+
+function assert_envoy_dynamic_cluster_exists_once {
+  local HOSTPORT=$1
+  local NAME_PREFIX=$2
+  local EXPECT_SNI=$3
+  BODY="$(get_envoy_dynamic_cluster_once $HOSTPORT $NAME_PREFIX)"
+  [ -n "$BODY" ]
+
+  SNI="$(echo "$BODY" | jq --raw-output ".cluster.transport_socket.typed_config.sni | select(. | startswith(\"${EXPECT_SNI}\"))")"
+  [ -n "$SNI" ]
+}
+
+function assert_envoy_dynamic_cluster_exists {
+  local HOSTPORT=$1
+  local NAME_PREFIX=$2
+  local EXPECT_SNI=$3
+  run retry_long assert_envoy_dynamic_cluster_exists_once $HOSTPORT $NAME_PREFIX $EXPECT_SNI
+  [ "$status" -eq 0 ]
 }
 
 function get_envoy_cluster_config {
@@ -456,6 +516,19 @@ function docker_consul {
   docker run -i --rm --network container:envoy_consul-${DC}_1 consul-dev "$@"
 }
 
+function docker_consul_for_proxy_bootstrap {
+  local DC=$1
+  shift 1
+
+  if [[ -n "${TEST_V2_XDS}" ]]; then
+      # pre-pull this image and discard any output so we don't corrupt the bootstrap file
+      docker pull "${OLD_XDSV2_AWARE_CONSUL_VERSION}" &>/dev/null
+      docker run -i --rm --network container:envoy_consul-${DC}_1 "${OLD_XDSV2_AWARE_CONSUL_VERSION}" "$@"
+  else
+      docker run -i --rm --network container:envoy_consul-${DC}_1 consul-dev "$@"
+  fi
+}
+
 function docker_wget {
   local DC=$1
   shift 1
@@ -482,26 +555,11 @@ function docker_consul_exec {
   docker_exec envoy_consul-${DC}_1 "$@"
 }
 
-function get_envoy_pid {
-  local BOOTSTRAP_NAME=$1
-  local DC=${2:-primary}
-  run ps aux
-  [ "$status" == 0 ]
-  echo "$output" 1>&2
-  PID="$(echo "$output" | grep "envoy -c /workdir/$DC/envoy/${BOOTSTRAP_NAME}-bootstrap.json" | awk '{print $1}')"
-  [ -n "$PID" ]
-
-  echo "$PID"
-}
-
 function kill_envoy {
   local BOOTSTRAP_NAME=$1
   local DC=${2:-primary}
 
-  PID="$(get_envoy_pid $BOOTSTRAP_NAME "$DC")"
-  echo "PID = $PID"
-
-  kill -TERM $PID
+  pkill -TERM -f "envoy -c /workdir/$DC/envoy/${BOOTSTRAP_NAME}-bootstrap.json"
 }
 
 function must_match_in_statsd_logs {
@@ -663,7 +721,7 @@ function gen_envoy_bootstrap {
     PROXY_ID="$SERVICE-sidecar-proxy"
   fi
 
-  if output=$(docker_consul "$DC" connect envoy -bootstrap \
+  if output=$(docker_consul_for_proxy_bootstrap "$DC" connect envoy -bootstrap \
     -proxy-id $PROXY_ID \
     -envoy-version "$ENVOY_VERSION" \
     -admin-bind 0.0.0.0:$ADMIN_PORT ${EXTRA_ENVOY_BS_ARGS} 2>&1); then
@@ -799,6 +857,36 @@ function assert_expected_fortio_name_pattern {
       :
   else
     echo "expected name pattern: $EXPECT_NAME_PATTERN, actual name: $GOT" 1>&2
+    return 1
+  fi
+}
+
+function get_upstream_fortio_host_header {
+  local HOST=$1
+  local PORT=$2
+  local PREFIX=$3
+  local DEBUG_HEADER_VALUE="${4:-""}"
+  local extra_args
+  if [[ -n "${DEBUG_HEADER_VALUE}" ]]; then
+      extra_args="-H x-test-debug:${DEBUG_HEADER_VALUE}"
+  fi
+  run retry_default curl -v -s -f -H"Host: ${HOST}" $extra_args \
+      "localhost:${PORT}${PREFIX}/debug"
+  [ "$status" == 0 ]
+  echo "$output" | grep -E "^Host: "
+}
+
+function assert_expected_fortio_host_header {
+  local EXPECT_HOST=$1
+  local HOST=${2:-"localhost"}
+  local PORT=${3:-5000}
+  local URL_PREFIX=${4:-""}
+  local DEBUG_HEADER_VALUE="${5:-""}"
+
+  GOT=$(get_upstream_fortio_host_header ${HOST} ${PORT} "${URL_PREFIX}" "${DEBUG_HEADER_VALUE}")
+
+  if [ "$GOT" != "Host: ${EXPECT_HOST}" ]; then
+    echo "expected Host header: $EXPECT_HOST, actual Host header: $GOT" 1>&2
     return 1
   fi
 }

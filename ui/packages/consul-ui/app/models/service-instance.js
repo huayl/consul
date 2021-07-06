@@ -37,6 +37,7 @@ export default class ServiceInstance extends Model {
   @fragmentArray('health-check') Checks;
   @attr('number') SyncTime;
   @attr() meta;
+  @attr({ defaultValue: () => [] }) Resources; // []
 
   // The name is the Name of the Service (the grouping of instances)
   @alias('Service.Service') Name;
@@ -44,6 +45,7 @@ export default class ServiceInstance extends Model {
   // If the ID is blank fallback to the Service.Service (the Name)
   @or('Service.{ID,Service}') ID;
   @or('Service.Address', 'Node.Service') Address;
+  @attr('string') SocketPath;
 
   @alias('Service.Tags') Tags;
   @alias('Service.Meta') Meta;

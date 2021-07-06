@@ -6,16 +6,21 @@ import (
 	"sort"
 	"testing"
 	"text/template"
+	"time"
 
-	envoy "github.com/envoyproxy/go-control-plane/envoy/api/v2"
-	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
+	envoy_listener_v3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
+
 	testinf "github.com/mitchellh/go-testing-interface"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hashicorp/consul/agent/connect"
+	"github.com/hashicorp/consul/agent/consul/discoverychain"
 	"github.com/hashicorp/consul/agent/proxycfg"
 	"github.com/hashicorp/consul/agent/structs"
 	"github.com/hashicorp/consul/agent/xds/proxysupport"
+	"github.com/hashicorp/consul/lib/stringslice"
 	"github.com/hashicorp/consul/sdk/testutil"
+	"github.com/hashicorp/consul/types"
 )
 
 func TestListenersFromSnapshot(t *testing.T) {
@@ -31,6 +36,7 @@ func TestListenersFromSnapshot(t *testing.T) {
 		// test input.
 		setup              func(snap *proxycfg.ConfigSnapshot)
 		overrideGoldenName string
+		generatorSetup     func(*ResourceGenerator)
 	}{
 		{
 			name:   "defaults",
@@ -57,6 +63,16 @@ func TestListenersFromSnapshot(t *testing.T) {
 			setup: func(snap *proxycfg.ConfigSnapshot) {
 				snap.Proxy.Config["bind_address"] = "127.0.0.2"
 				snap.Proxy.Config["bind_port"] = 8888
+			},
+		},
+		{
+			name:   "listener-unix-domain-socket",
+			create: proxycfg.TestConfigSnapshot,
+			setup: func(snap *proxycfg.ConfigSnapshot) {
+				snap.Proxy.Upstreams[0].LocalBindAddress = ""
+				snap.Proxy.Upstreams[0].LocalBindPort = 0
+				snap.Proxy.Upstreams[0].LocalBindSocketPath = "/tmp/service-mesh/client-1/grpc-employee-server"
+				snap.Proxy.Upstreams[0].LocalBindSocketMode = "0640"
 			},
 		},
 		{
@@ -88,8 +104,7 @@ func TestListenersFromSnapshot(t *testing.T) {
 			setup: func(snap *proxycfg.ConfigSnapshot) {
 				snap.Proxy.Config["envoy_public_listener_json"] =
 					customListenerJSON(t, customListenerJSONOptions{
-						Name:        "custom-public-listen",
-						IncludeType: false,
+						Name: "custom-public-listen",
 					})
 			},
 		},
@@ -101,18 +116,6 @@ func TestListenersFromSnapshot(t *testing.T) {
 				snap.Proxy.Config["envoy_public_listener_json"] =
 					customHTTPListenerJSON(t, customHTTPListenerJSONOptions{
 						Name: "custom-public-listen",
-					})
-			},
-		},
-		{
-			name:   "custom-public-listener-http-typed",
-			create: proxycfg.TestConfigSnapshot,
-			setup: func(snap *proxycfg.ConfigSnapshot) {
-				snap.Proxy.Config["protocol"] = "http"
-				snap.Proxy.Config["envoy_public_listener_json"] =
-					customHTTPListenerJSON(t, customHTTPListenerJSONOptions{
-						Name:        "custom-public-listen",
-						TypedConfig: true,
 					})
 			},
 		},
@@ -129,39 +132,13 @@ func TestListenersFromSnapshot(t *testing.T) {
 			},
 		},
 		{
-			name:   "custom-public-listener-http-2-typed",
-			create: proxycfg.TestConfigSnapshot,
-			setup: func(snap *proxycfg.ConfigSnapshot) {
-				snap.Proxy.Config["protocol"] = "http"
-				snap.Proxy.Config["envoy_public_listener_json"] =
-					customHTTPListenerJSON(t, customHTTPListenerJSONOptions{
-						Name:                      "custom-public-listen",
-						HTTPConnectionManagerName: httpConnectionManagerNewName,
-						TypedConfig:               true,
-					})
-			},
-		},
-		{
 			name:   "custom-public-listener-http-missing",
 			create: proxycfg.TestConfigSnapshot,
 			setup: func(snap *proxycfg.ConfigSnapshot) {
 				snap.Proxy.Config["protocol"] = "http"
 				snap.Proxy.Config["envoy_public_listener_json"] =
 					customListenerJSON(t, customListenerJSONOptions{
-						Name:        "custom-public-listen",
-						IncludeType: false,
-					})
-			},
-		},
-		{
-			name:               "custom-public-listener-typed",
-			create:             proxycfg.TestConfigSnapshot,
-			overrideGoldenName: "custom-public-listener", // should be the same
-			setup: func(snap *proxycfg.ConfigSnapshot) {
-				snap.Proxy.Config["envoy_public_listener_json"] =
-					customListenerJSON(t, customListenerJSONOptions{
-						Name:        "custom-public-listen",
-						IncludeType: true,
+						Name: "custom-public-listen",
 					})
 			},
 		},
@@ -172,10 +149,9 @@ func TestListenersFromSnapshot(t *testing.T) {
 			setup: func(snap *proxycfg.ConfigSnapshot) {
 				snap.Proxy.Config["envoy_public_listener_json"] =
 					customListenerJSON(t, customListenerJSONOptions{
-						Name:        "custom-public-listen",
-						IncludeType: true,
+						Name: "custom-public-listen",
 						// Attempt to override the TLS context should be ignored
-						TLSContext: `{"requireClientCertificate": false}`,
+						TLSContext: `"allowRenegotiation": false`,
 					})
 			},
 		},
@@ -185,31 +161,17 @@ func TestListenersFromSnapshot(t *testing.T) {
 			setup: func(snap *proxycfg.ConfigSnapshot) {
 				snap.Proxy.Upstreams[0].Config["envoy_listener_json"] =
 					customListenerJSON(t, customListenerJSONOptions{
-						Name:        "custom-upstream",
-						IncludeType: false,
+						Name: "custom-upstream",
 					})
 			},
 		},
 		{
-			name:               "custom-upstream-typed",
-			create:             proxycfg.TestConfigSnapshot,
-			overrideGoldenName: "custom-upstream", // should be the same
-			setup: func(snap *proxycfg.ConfigSnapshot) {
-				snap.Proxy.Upstreams[0].Config["envoy_listener_json"] =
-					customListenerJSON(t, customListenerJSONOptions{
-						Name:        "custom-upstream",
-						IncludeType: true,
-					})
-			},
-		},
-		{
-			name:   "custom-upstream-typed-ignored-with-disco-chain",
+			name:   "custom-upstream-ignored-with-disco-chain",
 			create: proxycfg.TestConfigSnapshotDiscoveryChainWithFailover,
 			setup: func(snap *proxycfg.ConfigSnapshot) {
 				snap.Proxy.Upstreams[0].Config["envoy_listener_json"] =
 					customListenerJSON(t, customListenerJSONOptions{
-						Name:        "custom-upstream",
-						IncludeType: true,
+						Name: "custom-upstream",
 					})
 			},
 		},
@@ -302,6 +264,38 @@ func TestListenersFromSnapshot(t *testing.T) {
 					ListenerPort:  21501,
 					Protocol:      "http2",
 				}
+			},
+		},
+		{
+			// NOTE: if IPv6 is not supported in the kernel per
+			// kernelSupportsIPv6() then this test will fail because the golden
+			// files were generated assuming ipv6 support was present
+			name:   "expose-checks",
+			create: proxycfg.TestConfigSnapshotExposeConfig,
+			setup: func(snap *proxycfg.ConfigSnapshot) {
+				snap.Proxy.Expose = structs.ExposeConfig{
+					Checks: true,
+				}
+			},
+			generatorSetup: func(s *ResourceGenerator) {
+				s.CfgFetcher = configFetcherFunc(func() string {
+					return "192.0.2.1"
+				})
+
+				s.CheckFetcher = httpCheckFetcherFunc(func(sid structs.ServiceID) []structs.CheckType {
+					if sid != structs.NewServiceID("web", nil) {
+						return nil
+					}
+					return []structs.CheckType{{
+						CheckID:   types.CheckID("http"),
+						Name:      "http",
+						HTTP:      "http://127.0.0.1:8181/debug",
+						ProxyHTTP: "http://:21500/debug",
+						Method:    "GET",
+						Interval:  10 * time.Second,
+						Timeout:   1 * time.Second,
+					}}
+				})
 			},
 		},
 		{
@@ -418,14 +412,14 @@ func TestListenersFromSnapshot(t *testing.T) {
 					"envoy_gateway_no_default_bind":       true,
 					"envoy_gateway_bind_tagged_addresses": true,
 					"envoy_gateway_bind_addresses": map[string]structs.ServiceAddress{
+						// This bind address should not get a listener due to deduplication and it sorts to the end
+						"z-duplicate-of-tagged-wan-addr": {
+							Address: "198.18.0.1",
+							Port:    443,
+						},
 						"foo": {
 							Address: "198.17.2.3",
 							Port:    8080,
-						},
-						// This bind address should not get a listener due to deduplication
-						"duplicate-of-tagged-wan-addr": {
-							Address: "198.18.0.1",
-							Port:    443,
 						},
 					},
 				}
@@ -495,16 +489,166 @@ func TestListenersFromSnapshot(t *testing.T) {
 			create: proxycfg.TestConfigSnapshotIngressWithTLSListener,
 			setup:  nil,
 		},
+		{
+			name:   "transparent-proxy",
+			create: proxycfg.TestConfigSnapshot,
+			setup: func(snap *proxycfg.ConfigSnapshot) {
+				snap.Proxy.Mode = structs.ProxyModeTransparent
+
+				snap.ConnectProxy.MeshConfigSet = true
+
+				// DiscoveryChain without an UpstreamConfig should yield a filter chain when in transparent proxy mode
+				snap.ConnectProxy.DiscoveryChain["google"] = discoverychain.TestCompileConfigEntries(
+					t, "google", "default", "dc1",
+					connect.TestClusterID+".consul", "dc1", nil)
+				snap.ConnectProxy.WatchedUpstreamEndpoints["google"] = map[string]structs.CheckServiceNodes{
+					"google.default.dc1": {
+						structs.CheckServiceNode{
+							Node: &structs.Node{
+								Address:    "8.8.8.8",
+								Datacenter: "dc1",
+							},
+							Service: &structs.NodeService{
+								Service: "google",
+								Address: "9.9.9.9",
+								Port:    9090,
+								TaggedAddresses: map[string]structs.ServiceAddress{
+									"virtual": {Address: "10.0.0.1"},
+								},
+							},
+						},
+					},
+					// Other targets of the discovery chain should be ignored.
+					// We only match on the upstream's virtual IP, not the IPs of other targets.
+					"google-v2.default.dc1": {
+						structs.CheckServiceNode{
+							Node: &structs.Node{
+								Address:    "7.7.7.7",
+								Datacenter: "dc1",
+							},
+							Service: &structs.NodeService{
+								Service: "google-v2",
+								TaggedAddresses: map[string]structs.ServiceAddress{
+									"virtual": {Address: "10.10.10.10"},
+								},
+							},
+						},
+					},
+				}
+
+				// DiscoveryChains without endpoints do not get a filter chain because there are no addresses to match on.
+				snap.ConnectProxy.DiscoveryChain["no-endpoints"] = discoverychain.TestCompileConfigEntries(
+					t, "no-endpoints", "default", "dc1",
+					connect.TestClusterID+".consul", "dc1", nil)
+			},
+		},
+		{
+			name:   "transparent-proxy-catalog-destinations-only",
+			create: proxycfg.TestConfigSnapshot,
+			setup: func(snap *proxycfg.ConfigSnapshot) {
+				snap.Proxy.Mode = structs.ProxyModeTransparent
+
+				snap.ConnectProxy.MeshConfigSet = true
+				snap.ConnectProxy.MeshConfig = &structs.MeshConfigEntry{
+					TransparentProxy: structs.TransparentProxyMeshConfig{
+						MeshDestinationsOnly: true,
+					},
+				}
+
+				// DiscoveryChain without an UpstreamConfig should yield a filter chain when in transparent proxy mode
+				snap.ConnectProxy.DiscoveryChain["google"] = discoverychain.TestCompileConfigEntries(
+					t, "google", "default", "dc1",
+					connect.TestClusterID+".consul", "dc1", nil)
+				snap.ConnectProxy.WatchedUpstreamEndpoints["google"] = map[string]structs.CheckServiceNodes{
+					"google.default.dc1": {
+						structs.CheckServiceNode{
+							Node: &structs.Node{
+								Address:    "8.8.8.8",
+								Datacenter: "dc1",
+							},
+							Service: &structs.NodeService{
+								Service: "google",
+								Address: "9.9.9.9",
+								Port:    9090,
+								TaggedAddresses: map[string]structs.ServiceAddress{
+									"virtual": {Address: "10.0.0.1"},
+								},
+							},
+						},
+					},
+				}
+
+				// DiscoveryChains without endpoints do not get a filter chain because there are no addresses to match on.
+				snap.ConnectProxy.DiscoveryChain["no-endpoints"] = discoverychain.TestCompileConfigEntries(
+					t, "no-endpoints", "default", "dc1",
+					connect.TestClusterID+".consul", "dc1", nil)
+			},
+		},
+		{
+			name:   "transparent-proxy-dial-instances-directly",
+			create: proxycfg.TestConfigSnapshot,
+			setup: func(snap *proxycfg.ConfigSnapshot) {
+				snap.Proxy.Mode = structs.ProxyModeTransparent
+
+				snap.ConnectProxy.DiscoveryChain["mongo"] = discoverychain.TestCompileConfigEntries(
+					t, "mongo", "default", "dc1",
+					connect.TestClusterID+".consul", "dc1", nil)
+
+				snap.ConnectProxy.DiscoveryChain["kafka"] = discoverychain.TestCompileConfigEntries(
+					t, "kafka", "default", "dc1",
+					connect.TestClusterID+".consul", "dc1", nil)
+
+				kafka := structs.NewServiceName("kafka", structs.DefaultEnterpriseMeta())
+				mongo := structs.NewServiceName("mongo", structs.DefaultEnterpriseMeta())
+
+				// We add a filter chains for each passthrough service name.
+				// The filter chain will route to a cluster with the same SNI name.
+				snap.ConnectProxy.PassthroughUpstreams = map[string]proxycfg.ServicePassthroughAddrs{
+					kafka.String(): {
+						SNI: "kafka.default.dc1.internal.e5b08d03-bfc3-c870-1833-baddb116e648.consul",
+						Addrs: map[string]struct{}{
+							"9.9.9.9": {},
+						},
+					},
+					mongo.String(): {
+						SNI: "mongo.default.dc1.internal.e5b08d03-bfc3-c870-1833-baddb116e648.consul",
+						Addrs: map[string]struct{}{
+							"10.10.10.10": {},
+							"10.10.10.12": {},
+						},
+					},
+				}
+
+				// There should still be a filter chain for mongo's virtual address
+				snap.ConnectProxy.WatchedUpstreamEndpoints["mongo"] = map[string]structs.CheckServiceNodes{
+					"mongo.default.dc1": {
+						structs.CheckServiceNode{
+							Node: &structs.Node{
+								Datacenter: "dc1",
+							},
+							Service: &structs.NodeService{
+								Service: "mongo",
+								Address: "7.7.7.7",
+								Port:    27017,
+								TaggedAddresses: map[string]structs.ServiceAddress{
+									"virtual": {Address: "6.6.6.6"},
+								},
+							},
+						},
+					},
+				}
+			},
+		},
 	}
 
+	latestEnvoyVersion := proxysupport.EnvoyVersions[0]
+	latestEnvoyVersion_v2 := proxysupport.EnvoyVersionsV2[0]
 	for _, envoyVersion := range proxysupport.EnvoyVersions {
 		sf, err := determineSupportedProxyFeaturesFromString(envoyVersion)
 		require.NoError(t, err)
 		t.Run("envoy-"+envoyVersion, func(t *testing.T) {
 			for _, tt := range tests {
 				t.Run(tt.name, func(t *testing.T) {
-					require := require.New(t)
-
 					// Sanity check default with no overrides first
 					snap := tt.create(t)
 
@@ -518,171 +662,66 @@ func TestListenersFromSnapshot(t *testing.T) {
 					}
 
 					// Need server just for logger dependency
-					s := Server{Logger: testutil.Logger(t)}
-
-					cInfo := connectionInfo{
-						Token:         "my-token",
-						ProxyFeatures: sf,
+					g := newResourceGenerator(testutil.Logger(t), nil, nil, false)
+					g.ProxyFeatures = sf
+					if tt.generatorSetup != nil {
+						tt.generatorSetup(g)
 					}
-					listeners, err := s.listenersFromSnapshot(cInfo, snap)
+
+					listeners, err := g.listenersFromSnapshot(snap)
+					require.NoError(t, err)
+
+					// The order of listeners returned via LDS isn't relevant, so it's safe
+					// to sort these for the purposes of test comparisons.
 					sort.Slice(listeners, func(i, j int) bool {
-						return listeners[i].(*envoy.Listener).Name < listeners[j].(*envoy.Listener).Name
+						return listeners[i].(*envoy_listener_v3.Listener).Name < listeners[j].(*envoy_listener_v3.Listener).Name
 					})
 
-					// For terminating gateways we create filter chain matches for services/subsets from the ServiceGroups map
-					for i := 0; i < len(listeners); i++ {
-						l := listeners[i].(*envoy.Listener)
-
-						if l.FilterChains != nil {
-							// Sort chains by the matched name with the exception of the last one
-							// The last chain is a fallback and does not have a FilterChainMatch
-							sort.Slice(l.FilterChains[:len(l.FilterChains)-1], func(i, j int) bool {
-								return l.FilterChains[i].FilterChainMatch.ServerNames[0] < l.FilterChains[j].FilterChainMatch.ServerNames[0]
-							})
-						}
-					}
-
-					require.NoError(err)
 					r, err := createResponse(ListenerType, "00000001", "00000001", listeners)
-					require.NoError(err)
+					require.NoError(t, err)
 
-					gotJSON := responseToJSON(t, r)
+					t.Run("current", func(t *testing.T) {
+						gotJSON := protoToJSON(t, r)
 
-					gName := tt.name
-					if tt.overrideGoldenName != "" {
-						gName = tt.overrideGoldenName
-					}
+						gName := tt.name
+						if tt.overrideGoldenName != "" {
+							gName = tt.overrideGoldenName
+						}
 
-					require.JSONEq(goldenEnvoy(t, filepath.Join("listeners", gName), envoyVersion, gotJSON), gotJSON)
+						require.JSONEq(t, goldenEnvoy(t, filepath.Join("listeners", gName), envoyVersion, latestEnvoyVersion, gotJSON), gotJSON)
+					})
+
+					t.Run("v2-compat", func(t *testing.T) {
+						if !stringslice.Contains(proxysupport.EnvoyVersionsV2, envoyVersion) {
+							t.Skip()
+						}
+						respV2, err := convertDiscoveryResponseToV2(r)
+						require.NoError(t, err)
+
+						gotJSON := protoToJSON(t, respV2)
+
+						gName := tt.name
+						if tt.overrideGoldenName != "" {
+							gName = tt.overrideGoldenName
+						}
+
+						gName += ".v2compat"
+
+						require.JSONEq(t, goldenEnvoy(t, filepath.Join("listeners", gName), envoyVersion, latestEnvoyVersion_v2, gotJSON), gotJSON)
+					})
 				})
 			}
 		})
 	}
 }
 
-func expectListenerJSONResources(t *testing.T, snap *proxycfg.ConfigSnapshot) map[string]string {
-	return map[string]string{
-		"public_listener": `{
-				"@type": "type.googleapis.com/envoy.api.v2.Listener",
-				"name": "public_listener:0.0.0.0:9999",
-				"address": {
-					"socketAddress": {
-						"address": "0.0.0.0",
-						"portValue": 9999
-					}
-				},
-				"filterChains": [
-					{
-						"tlsContext": ` + expectedPublicTLSContextJSON(t, snap) + `,
-						"filters": [
-							{
-								"name": "envoy.filters.network.rbac",
-								"config": {
-										"rules": {
-											},
-										"stat_prefix": "connect_authz"
-									}
-							},
-							{
-								"name": "envoy.tcp_proxy",
-								"config": {
-									"cluster": "local_app",
-									"stat_prefix": "public_listener"
-								}
-							}
-						]
-					}
-				]
-			}`,
-		"db": `{
-			"@type": "type.googleapis.com/envoy.api.v2.Listener",
-			"name": "db:127.0.0.1:9191",
-			"address": {
-				"socketAddress": {
-					"address": "127.0.0.1",
-					"portValue": 9191
-				}
-			},
-			"filterChains": [
-				{
-					"filters": [
-						{
-							"name": "envoy.tcp_proxy",
-							"config": {
-								"cluster": "db.default.dc1.internal.11111111-2222-3333-4444-555555555555.consul",
-								"stat_prefix": "upstream.db.default.dc1"
-							}
-						}
-					]
-				}
-			]
-		}`,
-		"prepared_query:geo-cache": `{
-			"@type": "type.googleapis.com/envoy.api.v2.Listener",
-			"name": "prepared_query:geo-cache:127.10.10.10:8181",
-			"address": {
-				"socketAddress": {
-					"address": "127.10.10.10",
-					"portValue": 8181
-				}
-			},
-			"filterChains": [
-				{
-					"filters": [
-						{
-							"name": "envoy.tcp_proxy",
-							"config": {
-								"cluster": "geo-cache.default.dc1.query.11111111-2222-3333-4444-555555555555.consul",
-								"stat_prefix": "upstream.prepared_query_geo-cache"
-							}
-						}
-					]
-				}
-			]
-		}`,
-	}
-}
-
-func expectListenerJSONFromResources(snap *proxycfg.ConfigSnapshot, v, n uint64, resourcesJSON map[string]string) string {
-	resJSON := ""
-	// Sort resources into specific order because that matters in JSONEq
-	// comparison later.
-	keyOrder := []string{"public_listener"}
-	for _, u := range snap.Proxy.Upstreams {
-		keyOrder = append(keyOrder, u.Identifier())
-	}
-	for _, k := range keyOrder {
-		j, ok := resourcesJSON[k]
-		if !ok {
-			continue
-		}
-		if resJSON != "" {
-			resJSON += ",\n"
-		}
-		resJSON += j
-	}
-	return `{
-		"versionInfo": "` + hexString(v) + `",
-		"resources": [` + resJSON + `],
-		"typeUrl": "type.googleapis.com/envoy.api.v2.Listener",
-		"nonce": "` + hexString(n) + `"
-		}`
-}
-
-func expectListenerJSON(t *testing.T, snap *proxycfg.ConfigSnapshot, v, n uint64) string {
-	return expectListenerJSONFromResources(snap, v, n, expectListenerJSONResources(t, snap))
-}
-
 type customListenerJSONOptions struct {
-	Name        string
-	IncludeType bool
-	TLSContext  string
+	Name       string
+	TLSContext string
 }
 
 const customListenerJSONTpl = `{
-	{{ if .IncludeType -}}
-	"@type": "type.googleapis.com/envoy.api.v2.Listener",
-	{{- end }}
+	"@type": "type.googleapis.com/envoy.config.listener.v3.Listener",
 	"name": "{{ .Name }}",
 	"address": {
 		"socketAddress": {
@@ -693,14 +732,21 @@ const customListenerJSONTpl = `{
 	"filterChains": [
 		{
 			{{ if .TLSContext -}}
-			"tlsContext": {{ .TLSContext }},
+			"transport_socket": {
+				"name": "tls",
+				"typed_config": {
+					"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+					{{ .TLSContext }}
+				}
+			},
 			{{- end }}
 			"filters": [
 				{
-					"name": "envoy.tcp_proxy",
-					"config": {
+					"name": "envoy.filters.network.tcp_proxy",
+					"typedConfig": {
+						"@type": "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
 							"cluster": "random-cluster",
-							"stat_prefix": "foo-stats"
+							"statPrefix": "foo-stats"
 						}
 				}
 			]
@@ -711,10 +757,10 @@ const customListenerJSONTpl = `{
 type customHTTPListenerJSONOptions struct {
 	Name                      string
 	HTTPConnectionManagerName string
-	TypedConfig               bool
 }
 
 const customHTTPListenerJSONTpl = `{
+	"@type": "type.googleapis.com/envoy.config.listener.v3.Listener",
 	"name": "{{ .Name }}",
 	"address": {
 		"socketAddress": {
@@ -727,15 +773,11 @@ const customHTTPListenerJSONTpl = `{
 			"filters": [
 				{
 					"name": "{{ .HTTPConnectionManagerName }}",
-					{{ if .TypedConfig -}}
 					"typedConfig": {
-					"@type": "type.googleapis.com/envoy.config.filter.network.http_connection_manager.v2.HttpConnectionManager",
-					{{ else -}}
-					"config": {
-					{{- end }}
+						"@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
 						"http_filters": [
 							{
-								"name": "envoy.router"
+								"name": "envoy.filters.http.router"
 							}
 						],
 						"route_config": {
@@ -781,9 +823,25 @@ func customListenerJSON(t *testing.T, opts customListenerJSONOptions) string {
 func customHTTPListenerJSON(t *testing.T, opts customHTTPListenerJSONOptions) string {
 	t.Helper()
 	if opts.HTTPConnectionManagerName == "" {
-		opts.HTTPConnectionManagerName = wellknown.HTTPConnectionManager
+		opts.HTTPConnectionManagerName = httpConnectionManagerNewName
 	}
 	var buf bytes.Buffer
 	require.NoError(t, customHTTPListenerJSONTemplate.Execute(&buf, opts))
 	return buf.String()
+}
+
+type httpCheckFetcherFunc func(serviceID structs.ServiceID) []structs.CheckType
+
+var _ HTTPCheckFetcher = (httpCheckFetcherFunc)(nil)
+
+func (f httpCheckFetcherFunc) ServiceHTTPBasedChecks(serviceID structs.ServiceID) []structs.CheckType {
+	return f(serviceID)
+}
+
+type configFetcherFunc func() string
+
+var _ ConfigFetcher = (configFetcherFunc)(nil)
+
+func (f configFetcherFunc) AdvertiseAddrLAN() string {
+	return f()
 }

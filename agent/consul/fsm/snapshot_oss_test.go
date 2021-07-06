@@ -5,6 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/go-msgpack/codec"
+	"github.com/hashicorp/go-raftchunking"
+	"github.com/stretchr/testify/require"
+
 	"github.com/hashicorp/consul/acl"
 	"github.com/hashicorp/consul/agent/connect"
 	"github.com/hashicorp/consul/agent/consul/state"
@@ -12,9 +16,6 @@ import (
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/lib/stringslice"
 	"github.com/hashicorp/consul/sdk/testutil"
-	"github.com/hashicorp/go-msgpack/codec"
-	"github.com/hashicorp/go-raftchunking"
-	"github.com/stretchr/testify/require"
 )
 
 func TestFSM_SnapshotRestore_OSS(t *testing.T) {
@@ -124,6 +125,13 @@ func TestFSM_SnapshotRestore_OSS(t *testing.T) {
 	}
 	require.NoError(t, fsm.state.ACLAuthMethodSet(1, method))
 
+	method = &structs.ACLAuthMethod{
+		Name:        "some-method2",
+		Type:        "testing",
+		Description: "test snapshot auth method",
+	}
+	require.NoError(t, fsm.state.ACLAuthMethodSet(1, method))
+
 	bindingRule := &structs.ACLBindingRule{
 		ID:          "85184c52-5997-4a84-9817-5945f2632a17",
 		Description: "test snapshot binding rule",
@@ -226,8 +234,8 @@ func TestFSM_SnapshotRestore_OSS(t *testing.T) {
 		Kind: structs.ProxyDefaults,
 		Name: "global",
 	}
-	require.NoError(t, fsm.state.EnsureConfigEntry(18, serviceConfig, structs.DefaultEnterpriseMeta()))
-	require.NoError(t, fsm.state.EnsureConfigEntry(19, proxyConfig, structs.DefaultEnterpriseMeta()))
+	require.NoError(t, fsm.state.EnsureConfigEntry(18, serviceConfig))
+	require.NoError(t, fsm.state.EnsureConfigEntry(19, proxyConfig))
 
 	ingress := &structs.IngressGatewayConfigEntry{
 		Kind: structs.IngressGateway,
@@ -244,7 +252,7 @@ func TestFSM_SnapshotRestore_OSS(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, fsm.state.EnsureConfigEntry(20, ingress, structs.DefaultEnterpriseMeta()))
+	require.NoError(t, fsm.state.EnsureConfigEntry(20, ingress))
 	_, gatewayServices, err := fsm.state.GatewayServices(nil, "ingress", structs.DefaultEnterpriseMeta())
 	require.NoError(t, err)
 
@@ -416,7 +424,15 @@ func TestFSM_SnapshotRestore_OSS(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, fsm.state.EnsureConfigEntry(26, serviceIxn, structs.DefaultEnterpriseMeta()))
+	require.NoError(t, fsm.state.EnsureConfigEntry(26, serviceIxn))
+
+	// mesh config entry
+	meshConfig := &structs.MeshConfigEntry{
+		TransparentProxy: structs.TransparentProxyMeshConfig{
+			MeshDestinationsOnly: true,
+		},
+	}
+	require.NoError(t, fsm.state.EnsureConfigEntry(27, meshConfig))
 
 	// Snapshot
 	snap, err := fsm.Snapshot()
@@ -538,10 +554,12 @@ func TestFSM_SnapshotRestore_OSS(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, bindingRule, bindingRule2)
 
-	// Verify ACL Auth Method is restored
-	_, method2, err := fsm2.state.ACLAuthMethodGetByName(nil, method.Name, nil)
+	// Verify ACL Auth Methods are restored
+	_, authMethods, err := fsm2.state.ACLAuthMethodList(nil, nil)
 	require.NoError(t, err)
-	require.Equal(t, method, method2)
+	require.Len(t, authMethods, 2)
+	require.Equal(t, "some-method", authMethods[0].Name)
+	require.Equal(t, "some-method2", authMethods[1].Name)
 
 	// Verify ACL Token is restored
 	_, rtoken, err := fsm2.state.ACLTokenGetByAccessor(nil, token.AccessorID, nil)
@@ -689,6 +707,11 @@ func TestFSM_SnapshotRestore_OSS(t *testing.T) {
 	_, serviceIxnEntry, err := fsm2.state.ConfigEntry(nil, structs.ServiceIntentions, "foo", structs.DefaultEnterpriseMeta())
 	require.NoError(t, err)
 	require.Equal(t, serviceIxn, serviceIxnEntry)
+
+	// Verify mesh config entry is restored
+	_, meshConfigEntry, err := fsm2.state.ConfigEntry(nil, structs.MeshConfig, structs.MeshConfigMesh, structs.DefaultEnterpriseMeta())
+	require.NoError(t, err)
+	require.Equal(t, meshConfig, meshConfigEntry)
 
 	// Snapshot
 	snap, err = fsm2.Snapshot()

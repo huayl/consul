@@ -5,18 +5,17 @@ import (
 	"sort"
 	"testing"
 
+	envoy_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	envoy_endpoint_v3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
+
 	"github.com/mitchellh/copystructure"
-
-	"github.com/stretchr/testify/require"
-
-	envoy "github.com/envoyproxy/go-control-plane/envoy/api/v2"
-	envoycore "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
-	envoyendpoint "github.com/envoyproxy/go-control-plane/envoy/api/v2/endpoint"
 	testinf "github.com/mitchellh/go-testing-interface"
+	"github.com/stretchr/testify/require"
 
 	"github.com/hashicorp/consul/agent/proxycfg"
 	"github.com/hashicorp/consul/agent/structs"
 	"github.com/hashicorp/consul/agent/xds/proxysupport"
+	"github.com/hashicorp/consul/lib/stringslice"
 	"github.com/hashicorp/consul/sdk/testutil"
 )
 
@@ -100,7 +99,7 @@ func Test_makeLoadAssignment(t *testing.T) {
 		name        string
 		clusterName string
 		endpoints   []loadAssignmentEndpointGroup
-		want        *envoy.ClusterLoadAssignment
+		want        *envoy_endpoint_v3.ClusterLoadAssignment
 	}{
 		{
 			name:        "no instances",
@@ -108,10 +107,10 @@ func Test_makeLoadAssignment(t *testing.T) {
 			endpoints: []loadAssignmentEndpointGroup{
 				{Endpoints: nil},
 			},
-			want: &envoy.ClusterLoadAssignment{
+			want: &envoy_endpoint_v3.ClusterLoadAssignment{
 				ClusterName: "service:test",
-				Endpoints: []*envoyendpoint.LocalityLbEndpoints{{
-					LbEndpoints: []*envoyendpoint.LbEndpoint{},
+				Endpoints: []*envoy_endpoint_v3.LocalityLbEndpoints{{
+					LbEndpoints: []*envoy_endpoint_v3.LbEndpoint{},
 				}},
 			},
 		},
@@ -121,24 +120,24 @@ func Test_makeLoadAssignment(t *testing.T) {
 			endpoints: []loadAssignmentEndpointGroup{
 				{Endpoints: testCheckServiceNodes},
 			},
-			want: &envoy.ClusterLoadAssignment{
+			want: &envoy_endpoint_v3.ClusterLoadAssignment{
 				ClusterName: "service:test",
-				Endpoints: []*envoyendpoint.LocalityLbEndpoints{{
-					LbEndpoints: []*envoyendpoint.LbEndpoint{
+				Endpoints: []*envoy_endpoint_v3.LocalityLbEndpoints{{
+					LbEndpoints: []*envoy_endpoint_v3.LbEndpoint{
 						{
-							HostIdentifier: &envoyendpoint.LbEndpoint_Endpoint{
-								Endpoint: &envoyendpoint.Endpoint{
+							HostIdentifier: &envoy_endpoint_v3.LbEndpoint_Endpoint{
+								Endpoint: &envoy_endpoint_v3.Endpoint{
 									Address: makeAddress("10.10.10.10", 1234),
 								}},
-							HealthStatus:        envoycore.HealthStatus_HEALTHY,
+							HealthStatus:        envoy_core_v3.HealthStatus_HEALTHY,
 							LoadBalancingWeight: makeUint32Value(1),
 						},
 						{
-							HostIdentifier: &envoyendpoint.LbEndpoint_Endpoint{
-								Endpoint: &envoyendpoint.Endpoint{
+							HostIdentifier: &envoy_endpoint_v3.LbEndpoint_Endpoint{
+								Endpoint: &envoy_endpoint_v3.Endpoint{
 									Address: makeAddress("10.10.10.20", 1234),
 								}},
-							HealthStatus:        envoycore.HealthStatus_HEALTHY,
+							HealthStatus:        envoy_core_v3.HealthStatus_HEALTHY,
 							LoadBalancingWeight: makeUint32Value(1),
 						},
 					},
@@ -151,24 +150,24 @@ func Test_makeLoadAssignment(t *testing.T) {
 			endpoints: []loadAssignmentEndpointGroup{
 				{Endpoints: testWeightedCheckServiceNodes},
 			},
-			want: &envoy.ClusterLoadAssignment{
+			want: &envoy_endpoint_v3.ClusterLoadAssignment{
 				ClusterName: "service:test",
-				Endpoints: []*envoyendpoint.LocalityLbEndpoints{{
-					LbEndpoints: []*envoyendpoint.LbEndpoint{
+				Endpoints: []*envoy_endpoint_v3.LocalityLbEndpoints{{
+					LbEndpoints: []*envoy_endpoint_v3.LbEndpoint{
 						{
-							HostIdentifier: &envoyendpoint.LbEndpoint_Endpoint{
-								Endpoint: &envoyendpoint.Endpoint{
+							HostIdentifier: &envoy_endpoint_v3.LbEndpoint_Endpoint{
+								Endpoint: &envoy_endpoint_v3.Endpoint{
 									Address: makeAddress("10.10.10.10", 1234),
 								}},
-							HealthStatus:        envoycore.HealthStatus_HEALTHY,
+							HealthStatus:        envoy_core_v3.HealthStatus_HEALTHY,
 							LoadBalancingWeight: makeUint32Value(10),
 						},
 						{
-							HostIdentifier: &envoyendpoint.LbEndpoint_Endpoint{
-								Endpoint: &envoyendpoint.Endpoint{
+							HostIdentifier: &envoy_endpoint_v3.LbEndpoint_Endpoint{
+								Endpoint: &envoy_endpoint_v3.Endpoint{
 									Address: makeAddress("10.10.10.20", 1234),
 								}},
-							HealthStatus:        envoycore.HealthStatus_HEALTHY,
+							HealthStatus:        envoy_core_v3.HealthStatus_HEALTHY,
 							LoadBalancingWeight: makeUint32Value(5),
 						},
 					},
@@ -181,24 +180,24 @@ func Test_makeLoadAssignment(t *testing.T) {
 			endpoints: []loadAssignmentEndpointGroup{
 				{Endpoints: testWarningCheckServiceNodes},
 			},
-			want: &envoy.ClusterLoadAssignment{
+			want: &envoy_endpoint_v3.ClusterLoadAssignment{
 				ClusterName: "service:test",
-				Endpoints: []*envoyendpoint.LocalityLbEndpoints{{
-					LbEndpoints: []*envoyendpoint.LbEndpoint{
+				Endpoints: []*envoy_endpoint_v3.LocalityLbEndpoints{{
+					LbEndpoints: []*envoy_endpoint_v3.LbEndpoint{
 						{
-							HostIdentifier: &envoyendpoint.LbEndpoint_Endpoint{
-								Endpoint: &envoyendpoint.Endpoint{
+							HostIdentifier: &envoy_endpoint_v3.LbEndpoint_Endpoint{
+								Endpoint: &envoy_endpoint_v3.Endpoint{
 									Address: makeAddress("10.10.10.10", 1234),
 								}},
-							HealthStatus:        envoycore.HealthStatus_HEALTHY,
+							HealthStatus:        envoy_core_v3.HealthStatus_HEALTHY,
 							LoadBalancingWeight: makeUint32Value(1),
 						},
 						{
-							HostIdentifier: &envoyendpoint.LbEndpoint_Endpoint{
-								Endpoint: &envoyendpoint.Endpoint{
+							HostIdentifier: &envoy_endpoint_v3.LbEndpoint_Endpoint{
+								Endpoint: &envoy_endpoint_v3.Endpoint{
 									Address: makeAddress("10.10.10.20", 1234),
 								}},
-							HealthStatus:        envoycore.HealthStatus_UNHEALTHY,
+							HealthStatus:        envoy_core_v3.HealthStatus_UNHEALTHY,
 							LoadBalancingWeight: makeUint32Value(1),
 						},
 					},
@@ -218,7 +217,7 @@ func Test_makeLoadAssignment(t *testing.T) {
 	}
 }
 
-func Test_endpointsFromSnapshot(t *testing.T) {
+func TestEndpointsFromSnapshot(t *testing.T) {
 	if testing.Short() {
 		t.Skip("too slow for testing.Short")
 	}
@@ -317,9 +316,17 @@ func Test_endpointsFromSnapshot(t *testing.T) {
 			setup: func(snap *proxycfg.ConfigSnapshot) {
 				snap.Proxy.Upstreams[0].Config["envoy_cluster_json"] =
 					customAppClusterJSON(t, customClusterJSONOptions{
-						Name:        "myservice",
-						IncludeType: false,
+						Name: "myservice",
 					})
+				snap.ConnectProxy.UpstreamConfig = map[string]*structs.Upstream{
+					"db": {
+						Config: map[string]interface{}{
+							"envoy_cluster_json": customAppClusterJSON(t, customClusterJSONOptions{
+								Name: "myservice",
+							}),
+						},
+					},
+				}
 			},
 		},
 		{
@@ -559,14 +566,14 @@ func Test_endpointsFromSnapshot(t *testing.T) {
 		},
 	}
 
+	latestEnvoyVersion := proxysupport.EnvoyVersions[0]
+	latestEnvoyVersion_v2 := proxysupport.EnvoyVersionsV2[0]
 	for _, envoyVersion := range proxysupport.EnvoyVersions {
 		sf, err := determineSupportedProxyFeaturesFromString(envoyVersion)
 		require.NoError(t, err)
 		t.Run("envoy-"+envoyVersion, func(t *testing.T) {
 			for _, tt := range tests {
 				t.Run(tt.name, func(t *testing.T) {
-					require := require.New(t)
-
 					// Sanity check default with no overrides first
 					snap := tt.create(t)
 
@@ -580,28 +587,47 @@ func Test_endpointsFromSnapshot(t *testing.T) {
 					}
 
 					// Need server just for logger dependency
-					s := Server{Logger: testutil.Logger(t)}
+					g := newResourceGenerator(testutil.Logger(t), nil, nil, false)
+					g.ProxyFeatures = sf
 
-					cInfo := connectionInfo{
-						Token:         "my-token",
-						ProxyFeatures: sf,
-					}
-					endpoints, err := s.endpointsFromSnapshot(cInfo, snap)
+					endpoints, err := g.endpointsFromSnapshot(snap)
+					require.NoError(t, err)
+
 					sort.Slice(endpoints, func(i, j int) bool {
-						return endpoints[i].(*envoy.ClusterLoadAssignment).ClusterName < endpoints[j].(*envoy.ClusterLoadAssignment).ClusterName
+						return endpoints[i].(*envoy_endpoint_v3.ClusterLoadAssignment).ClusterName < endpoints[j].(*envoy_endpoint_v3.ClusterLoadAssignment).ClusterName
 					})
-					require.NoError(err)
 					r, err := createResponse(EndpointType, "00000001", "00000001", endpoints)
-					require.NoError(err)
+					require.NoError(t, err)
 
-					gotJSON := responseToJSON(t, r)
+					t.Run("current", func(t *testing.T) {
+						gotJSON := protoToJSON(t, r)
 
-					gName := tt.name
-					if tt.overrideGoldenName != "" {
-						gName = tt.overrideGoldenName
-					}
+						gName := tt.name
+						if tt.overrideGoldenName != "" {
+							gName = tt.overrideGoldenName
+						}
 
-					require.JSONEq(goldenEnvoy(t, filepath.Join("endpoints", gName), envoyVersion, gotJSON), gotJSON)
+						require.JSONEq(t, goldenEnvoy(t, filepath.Join("endpoints", gName), envoyVersion, latestEnvoyVersion, gotJSON), gotJSON)
+					})
+
+					t.Run("v2-compat", func(t *testing.T) {
+						if !stringslice.Contains(proxysupport.EnvoyVersionsV2, envoyVersion) {
+							t.Skip()
+						}
+						respV2, err := convertDiscoveryResponseToV2(r)
+						require.NoError(t, err)
+
+						gotJSON := protoToJSON(t, respV2)
+
+						gName := tt.name
+						if tt.overrideGoldenName != "" {
+							gName = tt.overrideGoldenName
+						}
+
+						gName += ".v2compat"
+
+						require.JSONEq(t, goldenEnvoy(t, filepath.Join("endpoints", gName), envoyVersion, latestEnvoyVersion_v2, gotJSON), gotJSON)
+					})
 				})
 			}
 		})

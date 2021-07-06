@@ -5,13 +5,17 @@ export default class EditRoute extends Route {
   @service('repository/intention') repo;
   @service('env') env;
 
-  async model({ intention_id }, transition) {
+  async model(params, transition) {
     const dc = this.modelFor('dc').dc.Name;
-    const nspace = this.modelFor('nspace').nspace.substr(1);
+    const nspace = this.optionalParams().nspace;
 
     let item;
-    if (typeof intention_id !== 'undefined') {
-      item = await this.repo.findBySlug(intention_id, dc, nspace);
+    if (typeof params.intention_id !== 'undefined') {
+      item = await this.repo.findBySlug({
+        ns: nspace,
+        dc: dc,
+        id: params.intention_id,
+      });
     } else {
       const defaultNspace = this.env.var('CONSUL_NSPACES_ENABLED') ? '*' : 'default';
       item = await this.repo.create({
